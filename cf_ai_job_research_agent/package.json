@@ -14,7 +14,10 @@
     "dev": "wrangler dev",
     "build": "vite build",
     "deploy": "vite build && wrangler deploy",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "lint": "oxlint src/",
+    "format": "oxfmt src/",
+    "check": "tsc --noEmit && oxlint src/"
   },
   "dependencies": {
     "@cloudflare/ai-chat": "^0.3.2",

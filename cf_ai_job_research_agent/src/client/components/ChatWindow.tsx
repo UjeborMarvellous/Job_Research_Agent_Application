@@ -1,23 +1,13 @@
 import React, { useRef, useEffect } from "react";
 import { Sparkles, Zap, Database, Layers } from "lucide-react";
 import { theme } from "../types";
+import type { UIMessage } from "../types";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import InputBar from "./InputBar";
 
 interface ChatWindowProps {
-  messages: Array<{
-    id: string;
-    role: string;
-    parts: Array<{
-      type: string;
-      text?: string;
-      toolName?: string;
-      state?: string;
-      input?: unknown;
-      output?: unknown;
-    }>;
-  }>;
+  messages: UIMessage[];
   isStreaming: boolean;
   onSend: (text: string) => void;
 }

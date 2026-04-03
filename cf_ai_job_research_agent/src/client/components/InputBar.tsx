@@ -122,7 +122,7 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
             ) : (
               <ArrowUp
                 size={15}
-                color={value.trim() ? "#ffffff" : theme.colors.textMuted}
+                color={value.trim() ? theme.colors.white : theme.colors.textMuted}
               />
             )}
           </button>

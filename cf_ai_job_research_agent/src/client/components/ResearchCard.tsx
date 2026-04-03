@@ -75,6 +75,8 @@ function isDataEmpty(data: JobAnalysis): boolean {
     !data.cultureSignals ||
     !data.potentialRedFlags ||
     !data.positioningTips ||
+    !data.questionsToAsk ||
+    data.questionsToAsk.length === 0 ||
     data.companyOverview === FALLBACK_TEXT
   );
 }
