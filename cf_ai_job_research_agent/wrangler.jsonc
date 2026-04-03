@@ -4,7 +4,7 @@
   "main": "src/server.ts",
   "compatibility_date": "2026-04-02",
   "compatibility_flags": ["nodejs_compat"],
-  "ai": { "binding": "AI" },
+  "ai": { "binding": "AI", "remote": true },
   "assets": {
     "directory": "public",
     "binding": "ASSETS",

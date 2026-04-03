@@ -8,6 +8,8 @@ export const theme = {
     borderFocus: "#F48120",
     orange: "#F48120",
     orangeDim: "rgba(244, 129, 32, 0.12)",
+    orangeBorder: "rgba(244, 129, 32, 0.2)",
+    white: "#ffffff",
     orangeSubtle: "rgba(244, 129, 32, 0.06)",
     text: "#efefef",
     textSecondary: "#999999",
@@ -36,18 +38,6 @@ export const theme = {
   transition: "all 0.15s ease",
 } as const;
 
-export interface ResearchEntry {
-  id: string;
-  company: string;
-  jobTitle: string;
-  summary: string;
-  timestamp: string;
-}
-
-export interface AgentState {
-  researches: ResearchEntry[];
-}
-
 export interface JobAnalysis {
   companyOverview: string;
   roleExpectations: string;
@@ -55,4 +45,32 @@ export interface JobAnalysis {
   potentialRedFlags: string;
   questionsToAsk: string[];
   positioningTips: string;
+}
+
+export interface ResearchEntry {
+  id: string;
+  company: string;
+  jobTitle: string;
+  summary: string;
+  timestamp: string;
+  analysis: JobAnalysis;
+}
+
+export interface AgentState {
+  researches: ResearchEntry[];
+}
+
+export interface UIMessagePart {
+  type: string;
+  text?: string;
+  toolName?: string;
+  state?: string;
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface UIMessage {
+  id: string;
+  role: string;
+  parts: UIMessagePart[];
 }

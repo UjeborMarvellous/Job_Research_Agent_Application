@@ -24,7 +24,18 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@v3
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
-      - run: npm install
-      - run: npm run check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: cf_ai_job_research_agent/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: cf_ai_job_research_agent
+
+      - run: pnpm run check
+        working-directory: cf_ai_job_research_agent

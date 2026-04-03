@@ -6,7 +6,7 @@ import { theme } from "./types";
 import type { ResearchEntry } from "./types";
 
 export default function App() {
-  const { messages, sendMessage, agentState, isStreaming, status } = useJobAgent();
+  const { messages, sendMessage, agentState, isStreaming } = useJobAgent();
 
   const handleSelect = (entry: ResearchEntry) => {
     sendMessage({

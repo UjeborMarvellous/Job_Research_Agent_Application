@@ -112,14 +112,20 @@ export default function Sidebar({ researches, onSelect }: SidebarProps) {
           </div>
         ) : (
           reversed.map((entry) => (
-            <div
+            <button
               key={entry.id}
               onClick={() => onSelect(entry)}
               onMouseEnter={() => setHoveredId(entry.id)}
               onMouseLeave={() => setHoveredId(null)}
               style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
                 padding: "12px 16px",
                 borderBottom: `1px solid ${theme.colors.border}`,
+                borderTop: "none",
+                borderLeft: "none",
+                borderRight: "none",
                 cursor: "pointer",
                 background:
                   hoveredId === entry.id
@@ -183,7 +189,7 @@ export default function Sidebar({ researches, onSelect }: SidebarProps) {
                   {relativeTime(entry.timestamp)}
                 </span>
               </div>
-            </div>
+            </button>
           ))
         )}
       </div>
