@@ -1,0 +1,6 @@
+{
+  "extends": "agents/tsconfig",
+  "compilerOptions": {
+    "target": "ES2021"
+  }
+}

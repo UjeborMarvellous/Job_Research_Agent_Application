@@ -1,0 +1,49 @@
+{
+  "name": "cf-ai-job-research-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Starter template for building AI chat agents on Cloudflare",
+  "keywords": [
+    "agents",
+    "ai",
+    "cloudflare"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/ai-chat": "^0.3.2",
+    "agents": "^0.9.0",
+    "lucide-react": "^0.511.0",
+    "ai": "^6.0.142",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "workers-ai-provider": "^3.1.8",
+    "zod": "^4.3.6"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "workerd", "sharp", "core-js-pure"]
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-decorators": "^7.29.0",
+    "@cloudflare/vite-plugin": "1.30.3",
+    "@cloudflare/workers-types": "^4.20260401.1",
+    "@rolldown/plugin-babel": "^0.2.2",
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "oxfmt": "^0.43.0",
+    "oxlint": "^1.58.0",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.3",
+    "wrangler": "4.79.0"
+  }
+}
