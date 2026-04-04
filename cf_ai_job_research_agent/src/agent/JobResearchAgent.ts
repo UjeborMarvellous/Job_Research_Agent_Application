@@ -20,13 +20,9 @@ const intentSchema = z.object({
   entryId: z.string().optional(),
 });
 
-const extractSchema = z.object({
+const fullAnalysisSchema = z.object({
   jobTitle: z.string(),
   company: z.string(),
-  jobDescription: z.string(),
-});
-
-const analysisSchema = z.object({
   companyOverview: z.string(),
   roleExpectations: z.string(),
   cultureSignals: z.string(),
@@ -58,6 +54,40 @@ function getLastUserText(messages: UIMessage[]): string {
 function extractViewEntryTag(text: string): string | null {
   const match = text.match(/^\[view-entry:([^\]]+)\]/);
   return match ? match[1] : null;
+}
+
+const JOB_KEYWORDS = [
+  "responsibilities",
+  "qualifications",
+  "requirements",
+  "experience",
+  "salary",
+  "compensation",
+  "apply",
+  "role",
+  "position",
+  "team",
+  "benefits",
+  "skills",
+  "candidate",
+  "hiring",
+  "job description",
+];
+
+/**
+ * Fast heuristic: if the message is long and contains multiple job-related
+ * keywords, it is almost certainly a job posting. Skipping the LLM-based
+ * intent classifier saves a full ~5 s round-trip for the most common path.
+ */
+function looksLikeJobPosting(text: string): boolean {
+  if (text.length < 300) return false;
+  const lower = text.toLowerCase();
+  let hits = 0;
+  for (const kw of JOB_KEYWORDS) {
+    if (lower.includes(kw)) hits++;
+    if (hits >= 2) return true;
+  }
+  return false;
 }
 
 async function classifyIntent(
@@ -110,31 +140,54 @@ Rules:
   }
 }
 
-async function runAnalysis(
-  model: LanguageModel,
-  input: z.infer<typeof extractSchema>,
-  abortSignal: AbortSignal | undefined,
-): Promise<JobAnalysis> {
-  try {
-    const { object } = await generateObject({
-      model,
-      schema: analysisSchema,
-      system: `You are an expert career advisor. Analyze the job posting provided and return detailed, specific insights grounded entirely in the content given. No generic advice. Every field must contain multiple sentences. questionsToAsk must be specific to this exact role and company — minimum 5 questions.`,
-      prompt: `Job Title: ${input.jobTitle}\nCompany: ${input.company}\nJob Description: ${input.jobDescription}`,
-      abortSignal,
-    });
-    return object as JobAnalysis;
-  } catch (err) {
-    console.error("runAnalysis failed:", err);
-    return {
-      companyOverview: "Analysis unavailable — please try again.",
-      roleExpectations: "Analysis unavailable — please try again.",
-      cultureSignals: "Analysis unavailable — please try again.",
-      potentialRedFlags: "Analysis unavailable — please try again.",
-      questionsToAsk: ["Could not generate questions — please retry."],
-      positioningTips: "Analysis unavailable — please try again.",
-    } satisfies JobAnalysis;
+/**
+ * Scan the message thread backwards for the last assistant turn that contained
+ * an analyzeJobPosting tool part, then look up the matching ResearchEntry so
+ * the chat branch can inject full analysis context into its system prompt.
+ *
+ * Returns:
+ *   - A full ResearchEntry (with analysis) when Tier 1 is possible.
+ *   - A stub entry (analysis is null) when the conversation has context but
+ *     the entry was not persisted — Tier 2 still fires from conversation history.
+ *   - null when there is no prior job context at all.
+ */
+function getConversationJobContext(
+  uiMessages: UIMessage[],
+  savedEntries: ResearchEntry[],
+): ResearchEntry | null {
+  for (let i = uiMessages.length - 1; i >= 0; i--) {
+    const m = uiMessages[i];
+    if (m.role !== "assistant") continue;
+    for (const part of m.parts ?? []) {
+      if (
+        typeof part.type === "string" &&
+        part.type === "tool-analyzeJobPosting" &&
+        (part as { input?: { company?: string; jobTitle?: string } }).input
+      ) {
+        const input = (
+          part as { input: { company?: string; jobTitle?: string } }
+        ).input;
+        const company = input.company ?? "";
+        const jobTitle = input.jobTitle ?? "";
+        const match = savedEntries.find(
+          (e) =>
+            e.company.toLowerCase() === company.toLowerCase() &&
+            e.jobTitle.toLowerCase() === jobTitle.toLowerCase(),
+        );
+        if (match) return match;
+        // Conversation context exists but entry not in state — return stub for Tier 2
+        return {
+          id: "",
+          company,
+          jobTitle,
+          summary: "",
+          timestamp: "",
+          analysis: null as unknown as ResearchEntry["analysis"],
+        };
+      }
+    }
   }
+  return null;
 }
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
@@ -158,13 +211,10 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     const modelMessages = await convertToModelMessages(uiMessages);
     const savedEntries = (this.state?.researches ?? []) as ResearchEntry[];
 
-    // ── Classify intent ──────────────────────────────────────────────────────
-    const { intent, entryId } = await classifyIntent(
-      model,
-      lastUser,
-      savedEntries,
-      abortSignal,
-    );
+    // ── Classify intent (heuristic fast-path for obvious job postings) ─────
+    const { intent, entryId } = looksLikeJobPosting(lastUser)
+      ? { intent: "analyze-job" as const, entryId: undefined }
+      : await classifyIntent(model, lastUser, savedEntries, abortSignal);
 
     // ── view-saved-entry: replay stored card instantly, no LLM call ──────────
     if (intent === "view-saved-entry") {
@@ -239,81 +289,99 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
       }).toUIMessageStreamResponse({ originalMessages: uiMessages });
     }
 
-    // ── chat: general conversational reply ───────────────────────────────────
+    // ── chat: context-aware conversational reply ─────────────────────────────
     if (intent === "chat") {
+      const ctx = getConversationJobContext(uiMessages, savedEntries);
+
+      let system: string;
+
+      if (ctx?.analysis) {
+        // Tier 1 — full structured analysis in state: give the model everything
+        system = `You are an expert career coach helping a job applicant.
+You have already analyzed the following role for them:
+
+Role: ${ctx.jobTitle} at ${ctx.company}
+
+Company Overview:
+${ctx.analysis.companyOverview}
+
+Role Expectations:
+${ctx.analysis.roleExpectations}
+
+Culture Signals:
+${ctx.analysis.cultureSignals}
+
+Potential Red Flags:
+${ctx.analysis.potentialRedFlags}
+
+How to Position Yourself:
+${ctx.analysis.positioningTips}
+
+Questions to Ask the Interviewer:
+${ctx.analysis.questionsToAsk.join("\n")}
+
+The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked.`;
+      } else if (ctx) {
+        // Tier 2 — conversation context exists but no stored analysis
+        // (e.g. analysis failed, or entry was not persisted); model can still
+        // read the raw job text from the conversation history.
+        system = `You are an expert career coach helping a job applicant.
+Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
+Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.`;
+      } else {
+        // Tier 3 — no prior job context at all
+        system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.`;
+      }
+
       return streamText({
         model,
-        system: `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.`,
+        system,
         messages: modelMessages,
         abortSignal,
         onFinish,
       }).toUIMessageStreamResponse({ originalMessages: uiMessages });
     }
 
-    // ── analyze-job: extract → analyze → save/update → stream card ───────────
+    // ── analyze-job: single combined extract+analyze → save → stream card ────
     const stream = createUIMessageStream({
       originalMessages: uiMessages,
       execute: async ({ writer }) => {
         writer.write({ type: "start" });
 
-        // Fix 4: immediate user-visible feedback before slow model calls
-        const loadingTextId = crypto.randomUUID();
-        writer.write({ type: "text-start", id: loadingTextId });
-        writer.write({
-          type: "text-delta",
-          id: loadingTextId,
-          delta: "Extracting role details — this takes about 20 seconds…",
-        });
-        writer.write({ type: "text-end", id: loadingTextId });
-
-        // Extract structured fields from the job posting
-        let extracted: z.infer<typeof extractSchema>;
+        let result: z.infer<typeof fullAnalysisSchema>;
         try {
           const { object } = await generateObject({
             model,
-            schema: extractSchema,
-            system: `Extract job title, company name, and the full job description from the user's message. Use "Unknown company" only if the company cannot be determined. jobDescription must preserve the substantive posting text.`,
+            schema: fullAnalysisSchema,
+            system: `You are an expert career advisor. From the user's message, extract the job title and company name, then produce a detailed, specific analysis grounded entirely in the content given. Use "Unknown company" only if the company truly cannot be determined. No generic advice. Every field must contain multiple sentences. questionsToAsk must be specific to this exact role and company — minimum 5 questions.`,
             prompt: lastUser,
             abortSignal,
           });
-          extracted = object;
+          result = object;
         } catch (err) {
-          console.error("Job extraction failed:", err);
+          console.error("Job analysis failed:", err);
           const errTextId = crypto.randomUUID();
           writer.write({ type: "text-start", id: errTextId });
           writer.write({
             type: "text-delta",
             id: errTextId,
-            delta: "I couldn't parse this as a job posting. Please paste the full job title, company, and description.",
+            delta: "I couldn't analyze this as a job posting. Please paste the full job title, company, and description.",
           });
           writer.write({ type: "text-end", id: errTextId });
           writer.write({ type: "finish", finishReason: "stop" });
           return;
         }
 
-        if (!extracted.jobDescription.trim()) {
-          const noDescId = crypto.randomUUID();
-          writer.write({ type: "text-start", id: noDescId });
-          writer.write({
-            type: "text-delta",
-            id: noDescId,
-            delta: "No job description was found in your message. Please paste the full posting including the role details.",
-          });
-          writer.write({ type: "text-end", id: noDescId });
-          writer.write({ type: "finish", finishReason: "stop" });
-          return;
-        }
+        const { jobTitle, company, ...analysis } = result;
 
-        const analysis = await runAnalysis(model, extracted, abortSignal);
-
-        // Fix 3: deduplicate — update if same company+title already saved
+        // Deduplicate — update if same company+title already saved
         try {
           const current = (this.state?.researches ?? []) as ResearchEntry[];
-          const summary = `${extracted.jobTitle} at ${extracted.company}: ${analysis.companyOverview.slice(0, 140)}${analysis.companyOverview.length > 140 ? "…" : ""}`;
+          const summary = `${jobTitle} at ${company}: ${analysis.companyOverview.slice(0, 140)}${analysis.companyOverview.length > 140 ? "…" : ""}`;
           const existingIdx = current.findIndex(
             (r) =>
-              r.company.toLowerCase() === extracted.company.toLowerCase() &&
-              r.jobTitle.toLowerCase() === extracted.jobTitle.toLowerCase(),
+              r.company.toLowerCase() === company.toLowerCase() &&
+              r.jobTitle.toLowerCase() === jobTitle.toLowerCase(),
           );
 
           let updated: ResearchEntry[];
@@ -326,8 +394,8 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
           } else {
             const entry: ResearchEntry = {
               id: crypto.randomUUID(),
-              company: extracted.company,
-              jobTitle: extracted.jobTitle,
+              company,
+              jobTitle,
               summary,
               timestamp: new Date().toISOString(),
               analysis,
@@ -350,7 +418,7 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
           type: "tool-input-available",
           toolCallId,
           toolName: "analyzeJobPosting",
-          input: extracted,
+          input: { jobTitle, company },
           providerExecuted: true,
         });
         writer.write({
@@ -366,7 +434,7 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
           messages: [
             {
               role: "user",
-              content: `Job: ${extracted.jobTitle} at ${extracted.company}.\n\nResearch excerpt:\n${analysis.companyOverview.slice(0, 600)}\n\nWrite 2–3 short sentences on the single most important insight for the applicant. Be specific. Do not repeat JSON or section headings.`,
+              content: `Job: ${jobTitle} at ${company}.\n\nResearch excerpt:\n${analysis.companyOverview.slice(0, 600)}\n\nWrite 2–3 short sentences on the single most important insight for the applicant. Be specific. Do not repeat JSON or section headings.`,
             },
           ],
           abortSignal,

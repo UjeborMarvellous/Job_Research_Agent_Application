@@ -6,7 +6,7 @@ import { theme } from "./types";
 import type { ResearchEntry } from "./types";
 
 export default function App() {
-  const { messages, sendMessage, agentState, isStreaming } = useJobAgent();
+  const { messages, sendMessage, agentState, isStreaming, clearHistory } = useJobAgent();
 
   const handleSelect = (entry: ResearchEntry) => {
     sendMessage({
@@ -28,6 +28,7 @@ export default function App() {
         messages={messages}
         isStreaming={isStreaming}
         onSend={(text) => sendMessage({ text })}
+        onClearHistory={clearHistory}
       />
     </div>
   );
