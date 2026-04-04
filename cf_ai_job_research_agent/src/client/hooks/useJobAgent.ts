@@ -20,7 +20,7 @@ export default function useJobAgent() {
     name: sessionId,
   });
 
-  const { messages, sendMessage, status } = useAgentChat({
+  const { messages, sendMessage, status, clearHistory } = useAgentChat({
     agent,
   });
 
@@ -31,5 +31,6 @@ export default function useJobAgent() {
     sendMessage,
     agentState,
     isStreaming: status === "streaming",
+    clearHistory,
   };
 }

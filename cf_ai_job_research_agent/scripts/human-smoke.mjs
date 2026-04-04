@@ -131,11 +131,17 @@ We are hiring a Staff SWE to work on our HTTP proxy and Workers runtime. You wil
   console.log("Tool-ish chunks:", s1.toolRelatedCount);
   console.log("Text preview:", s1.textPreview || "(none)");
 
-  console.log("\n--- Turn 2: history question ---");
-  const chunks2 = await sendTurn(ws, "What is my saved research history?", 120_000);
+  console.log("\n--- Turn 2: follow-up question (expect context-aware reply) ---");
+  const chunks2 = await sendTurn(ws, "What should I prioritize in my cover letter for this role?", 120_000);
   const s2 = summarizeChunks(chunks2);
   console.log("Chunk type sequence (first 30):", s2.types.slice(0, 30).join(", "));
   console.log("Text preview:", s2.textPreview || "(none)");
+
+  console.log("\n--- Turn 3: history question ---");
+  const chunks3 = await sendTurn(ws, "What is my saved research history?", 120_000);
+  const s3 = summarizeChunks(chunks3);
+  console.log("Chunk type sequence (first 20):", s3.types.slice(0, 20).join(", "));
+  console.log("Text preview:", s3.textPreview || "(none)");
 
   ws.close();
   console.log("\nDone.");
