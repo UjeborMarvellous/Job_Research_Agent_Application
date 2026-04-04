@@ -58,6 +58,21 @@ export interface ResearchEntry {
 
 export interface AgentState {
   researches: ResearchEntry[];
+  resumeText?: string;
+  resumeFileName?: string;
+}
+
+export interface DocumentMeta {
+  title: string;
+  content: string;
+  documentType: string;
+}
+
+export interface ConversationMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UIMessagePart {

@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, FileText, ExternalLink } from "lucide-react";
 import { getToolName, isToolUIPart } from "ai";
 import { theme } from "../types";
 import type { UIMessage, JobAnalysis } from "../types";
@@ -12,9 +12,10 @@ function looksLikeRawFunctionCallJson(text: string): boolean {
 
 interface MessageBubbleProps {
   message: UIMessage;
+  onOpenDocument?: (doc: { title: string; content: string }) => void;
 }
 
-export default function MessageBubble({ message }: MessageBubbleProps) {
+export default function MessageBubble({ message, onOpenDocument }: MessageBubbleProps) {
   try {
     if (message.role === "user") {
       const text =
@@ -22,6 +23,10 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           ?.filter((p) => p.type === "text" && p.text)
           .map((p) => (p as { text: string }).text)
           .join("\n") ?? "";
+
+      if (text.startsWith("[resume-upload:")) return null;
+      if (text.startsWith("[view-entry:")) return null;
+
       return (
         <div
           style={{
@@ -192,6 +197,115 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
                   </span>
                 </div>
               );
+            }
+
+            if (isToolUIPart(aiPart) && getToolName(aiPart) === "generateDocument") {
+              if (aiPart.state === "output-available") {
+                const input = aiPart.input as { title?: string; documentType?: string };
+                const output = aiPart.output as { content?: string; format?: string };
+                const title = input?.title ?? "Document";
+                const content = output?.content ?? "";
+
+                return (
+                  <div
+                    key={index}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      padding: "10px 14px",
+                      marginTop: "8px",
+                      background: theme.colors.surfaceElevated,
+                      border: `1px solid ${theme.colors.border}`,
+                      borderRadius: theme.radius.md,
+                    }}
+                  >
+                    <FileText size={18} color={theme.colors.orange} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p
+                        style={{
+                          fontSize: theme.font.size.base,
+                          fontWeight: theme.font.weight.semibold,
+                          color: theme.colors.text,
+                          fontFamily: theme.font.family,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {title}
+                      </p>
+                      <p
+                        style={{
+                          fontSize: theme.font.size.xs,
+                          color: theme.colors.textMuted,
+                          fontFamily: theme.font.family,
+                          marginTop: "2px",
+                        }}
+                      >
+                        Ready to edit and export
+                      </p>
+                    </div>
+                    {onOpenDocument && (
+                      <button
+                        onClick={() => onOpenDocument({ title, content })}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "5px 10px",
+                          background: theme.colors.orangeDim,
+                          border: `1px solid ${theme.colors.orangeBorder}`,
+                          borderRadius: theme.radius.sm,
+                          cursor: "pointer",
+                          transition: theme.transition,
+                          fontSize: theme.font.size.sm,
+                          color: theme.colors.orange,
+                          fontFamily: theme.font.family,
+                          fontWeight: theme.font.weight.medium,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <ExternalLink size={12} />
+                        Open in Editor
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+
+              if (
+                aiPart.state === "input-streaming" ||
+                aiPart.state === "input-available"
+              ) {
+                return (
+                  <div
+                    key={index}
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "4px 0",
+                    }}
+                  >
+                    <Loader2
+                      size={12}
+                      color={theme.colors.textMuted}
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
+                    <span
+                      style={{
+                        fontSize: theme.font.size.sm,
+                        color: theme.colors.textMuted,
+                        fontFamily: theme.font.family,
+                      }}
+                    >
+                      Generating document...
+                    </span>
+                  </div>
+                );
+              }
             }
 
             return null;

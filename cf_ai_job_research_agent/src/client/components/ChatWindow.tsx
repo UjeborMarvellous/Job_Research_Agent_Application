@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Sparkles, Zap, Database, Layers, AlertTriangle, RotateCcw } from "lucide-react";
+import { Sparkles, Zap, Database, Layers, AlertTriangle } from "lucide-react";
 import { theme } from "../types";
 import type { UIMessage } from "../types";
 import MessageBubble from "./MessageBubble";
@@ -12,10 +12,10 @@ interface ChatWindowProps {
   messages: UIMessage[];
   isStreaming: boolean;
   onSend: (text: string) => void;
-  onClearHistory: () => void;
+  onOpenDocument?: (doc: { title: string; content: string }) => void;
 }
 
-export default function ChatWindow({ messages, isStreaming, onSend, onClearHistory }: ChatWindowProps) {
+export default function ChatWindow({ messages, isStreaming, onSend, onOpenDocument }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [stalled, setStalled] = useState(false);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,47 +73,15 @@ export default function ChatWindow({ messages, isStreaming, onSend, onClearHisto
             Job Research Agent
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <span
-            style={{
-              fontSize: theme.font.size.xs,
-              color: theme.colors.textMuted,
-              fontFamily: theme.font.family,
-            }}
-          >
-            Powered by Cloudflare Workers AI
-          </span>
-          {messages.length > 0 && (
-            <button
-              onClick={onClearHistory}
-              disabled={isStreaming}
-              title="Start a new conversation"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-                background: "transparent",
-                border: `1px solid ${theme.colors.border}`,
-                borderRadius: theme.radius.md,
-                padding: "4px 10px",
-                cursor: isStreaming ? "not-allowed" : "pointer",
-                opacity: isStreaming ? 0.4 : 1,
-                transition: theme.transition,
-              }}
-            >
-              <RotateCcw size={11} color={theme.colors.textMuted} />
-              <span
-                style={{
-                  fontSize: theme.font.size.xs,
-                  color: theme.colors.textMuted,
-                  fontFamily: theme.font.family,
-                }}
-              >
-                New conversation
-              </span>
-            </button>
-          )}
-        </div>
+        <span
+          style={{
+            fontSize: theme.font.size.xs,
+            color: theme.colors.textMuted,
+            fontFamily: theme.font.family,
+          }}
+        >
+          Powered by Cloudflare Workers AI
+        </span>
       </div>
 
       {/* Message area */}
@@ -197,7 +165,7 @@ export default function ChatWindow({ messages, isStreaming, onSend, onClearHisto
         ) : (
           <>
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+              <MessageBubble key={msg.id} message={msg} onOpenDocument={onOpenDocument} />
             ))}
             {isStreaming && <TypingIndicator />}
           </>
