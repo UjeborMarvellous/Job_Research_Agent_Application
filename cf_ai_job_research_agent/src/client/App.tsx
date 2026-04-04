@@ -10,7 +10,7 @@ export default function App() {
 
   const handleSelect = (entry: ResearchEntry) => {
     sendMessage({
-      text: `Show me my saved research for the ${entry.jobTitle} role at ${entry.company}`,
+      text: `[view-entry:${entry.id}] ${entry.jobTitle} at ${entry.company}`,
     });
   };
 

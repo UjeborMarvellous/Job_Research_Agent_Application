@@ -1,10 +1,12 @@
-import React, { useRef, useEffect } from "react";
-import { Sparkles, Zap, Database, Layers } from "lucide-react";
+import React, { useRef, useEffect, useState } from "react";
+import { Sparkles, Zap, Database, Layers, AlertTriangle } from "lucide-react";
 import { theme } from "../types";
 import type { UIMessage } from "../types";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import InputBar from "./InputBar";
+
+const STALL_TIMEOUT_MS = 45_000;
 
 interface ChatWindowProps {
   messages: UIMessage[];
@@ -14,6 +16,21 @@ interface ChatWindowProps {
 
 export default function ChatWindow({ messages, isStreaming, onSend }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [stalled, setStalled] = useState(false);
+  const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (stallTimer.current) clearTimeout(stallTimer.current);
+    if (isStreaming) {
+      setStalled(false);
+      stallTimer.current = setTimeout(() => setStalled(true), STALL_TIMEOUT_MS);
+    } else {
+      setStalled(false);
+    }
+    return () => {
+      if (stallTimer.current) clearTimeout(stallTimer.current);
+    };
+  }, [isStreaming, messages.length]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -154,6 +171,33 @@ export default function ChatWindow({ messages, isStreaming, onSend }: ChatWindow
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Stalled-stream banner */}
+      {stalled && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "8px 16px",
+            background: theme.colors.dangerDim,
+            borderTop: `1px solid ${theme.colors.dangerBorder}`,
+            flexShrink: 0,
+          }}
+        >
+          <AlertTriangle size={13} color={theme.colors.danger} />
+          <span
+            style={{
+              fontSize: theme.font.size.sm,
+              color: theme.colors.danger,
+              fontFamily: theme.font.family,
+            }}
+          >
+            The response is taking longer than expected. You can wait or try
+            sending your message again.
+          </span>
+        </div>
+      )}
 
       {/* Input */}
       <InputBar onSend={onSend} disabled={isStreaming} />
