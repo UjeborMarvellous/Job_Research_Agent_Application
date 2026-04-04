@@ -2,25 +2,13 @@ import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import type { AgentState, UIMessage } from "../types";
 
-const getSessionId = (): string => {
-  const key = "jra_session_id";
-  let id = localStorage.getItem(key);
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(key, id);
-  }
-  return id;
-};
-
-export default function useJobAgent() {
-  const sessionId = getSessionId();
-
+export default function useJobAgent(sessionId: string) {
   const agent = useAgent<AgentState>({
     agent: "JobResearchAgent",
     name: sessionId,
   });
 
-  const { messages, sendMessage, status, clearHistory } = useAgentChat({
+  const { messages, sendMessage, status } = useAgentChat({
     agent,
   });
 
@@ -31,6 +19,5 @@ export default function useJobAgent() {
     sendMessage,
     agentState,
     isStreaming: status === "streaming",
-    clearHistory,
   };
 }

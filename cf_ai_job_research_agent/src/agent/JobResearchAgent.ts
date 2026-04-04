@@ -11,13 +11,20 @@ import {
   type UIMessage,
 } from "ai";
 import { z } from "zod";
-import type { AgentState, JobAnalysis, ResearchEntry } from "../client/types";
+import type { AgentState, ResearchEntry } from "../client/types";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const intentSchema = z.object({
-  intent: z.enum(["analyze-job", "view-history", "view-saved-entry", "chat"]),
+  intent: z.enum([
+    "analyze-job",
+    "view-history",
+    "view-saved-entry",
+    "generate-document",
+    "chat",
+  ]),
   entryId: z.string().optional(),
+  documentType: z.enum(["cover-letter", "email", "cv-tips"]).optional(),
 });
 
 const fullAnalysisSchema = z.object({
@@ -54,6 +61,12 @@ function getLastUserText(messages: UIMessage[]): string {
 function extractViewEntryTag(text: string): string | null {
   const match = text.match(/^\[view-entry:([^\]]+)\]/);
   return match ? match[1] : null;
+}
+
+/** Detect the [resume-upload:<fileName>] tag from the client. */
+function extractResumeUploadTag(text: string): { fileName: string; resumeText: string } | null {
+  const match = text.match(/^\[resume-upload:([^\]]+)\]\s*([\s\S]*)$/);
+  return match ? { fileName: match[1], resumeText: match[2].trim() } : null;
 }
 
 const JOB_KEYWORDS = [
@@ -96,6 +109,10 @@ async function classifyIntent(
   savedEntries: ResearchEntry[],
   abortSignal: AbortSignal | undefined,
 ): Promise<z.infer<typeof intentSchema>> {
+  if (extractResumeUploadTag(lastUserText)) {
+    return { intent: "chat" };
+  }
+
   const viewTag = extractViewEntryTag(lastUserText);
   if (viewTag) {
     return { intent: "view-saved-entry", entryId: viewTag };
@@ -125,12 +142,14 @@ Classify the user's message into exactly one intent:
 - "analyze-job": the message contains or is a job posting/description (usually multi-line, describes a role, requirements, responsibilities).
 - "view-history": the user wants a list or summary of all their saved research.
 - "view-saved-entry": the user is asking to see a specific saved entry from the list above. If matched, also return its id in entryId.
+- "generate-document": the user is requesting a document be generated — a cover letter, email draft, or CV/resume improvement tips. If matched, also return documentType as "cover-letter", "email", or "cv-tips".
 - "chat": anything else (follow-up questions, greetings, general conversation).
 
 Rules:
 - If the message starts with [view-entry:<id>] always return view-saved-entry with that id.
 - Do NOT classify job postings as "chat" even if they contain words like "history" or "culture".
-- A job posting usually has: job title, responsibilities, requirements, compensation, or company description.`,
+- A job posting usually has: job title, responsibilities, requirements, compensation, or company description.
+- If the user asks to write/draft/generate a cover letter, email, or resume tips, classify as "generate-document".`,
       prompt: lastUserText,
       abortSignal,
     });
@@ -193,7 +212,7 @@ function getConversationJobContext(
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
 export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
-  initialState: AgentState = { researches: [] };
+  initialState: AgentState = { researches: [], resumeText: undefined, resumeFileName: undefined };
 
   onError(connectionOrError: Connection | unknown, error?: unknown): void {
     console.error("WebSocket error:", error ?? connectionOrError);
@@ -211,9 +230,36 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     const modelMessages = await convertToModelMessages(uiMessages);
     const savedEntries = (this.state?.researches ?? []) as ResearchEntry[];
 
+    // ── Resume upload: store and confirm without LLM classification ────────
+    const resumeTag = extractResumeUploadTag(lastUser);
+    if (resumeTag) {
+      try {
+        await this.setState({
+          ...this.state,
+          resumeText: resumeTag.resumeText,
+          resumeFileName: resumeTag.fileName,
+        });
+      } catch (err) {
+        console.error("Failed to store resume:", err);
+      }
+
+      return streamText({
+        model,
+        system: "You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences).",
+        messages: [
+          {
+            role: "user",
+            content: `I uploaded my resume: ${resumeTag.fileName}`,
+          },
+        ],
+        abortSignal,
+        onFinish,
+      }).toUIMessageStreamResponse({ originalMessages: uiMessages });
+    }
+
     // ── Classify intent (heuristic fast-path for obvious job postings) ─────
-    const { intent, entryId } = looksLikeJobPosting(lastUser)
-      ? { intent: "analyze-job" as const, entryId: undefined }
+    const { intent, entryId, documentType } = looksLikeJobPosting(lastUser)
+      ? { intent: "analyze-job" as const, entryId: undefined, documentType: undefined }
       : await classifyIntent(model, lastUser, savedEntries, abortSignal);
 
     // ── view-saved-entry: replay stored card instantly, no LLM call ──────────
@@ -292,11 +338,14 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     // ── chat: context-aware conversational reply ─────────────────────────────
     if (intent === "chat") {
       const ctx = getConversationJobContext(uiMessages, savedEntries);
+      const resumeText = (this.state as AgentState)?.resumeText;
+      const resumeSnippet = resumeText
+        ? `\n\nThe user's resume (extracted text, use to personalise advice):\n${resumeText.slice(0, 3000)}`
+        : "";
 
       let system: string;
 
       if (ctx?.analysis) {
-        // Tier 1 — full structured analysis in state: give the model everything
         system = `You are an expert career coach helping a job applicant.
 You have already analyzed the following role for them:
 
@@ -319,18 +368,15 @@ ${ctx.analysis.positioningTips}
 
 Questions to Ask the Interviewer:
 ${ctx.analysis.questionsToAsk.join("\n")}
+${resumeSnippet}
 
 The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked.`;
       } else if (ctx) {
-        // Tier 2 — conversation context exists but no stored analysis
-        // (e.g. analysis failed, or entry was not persisted); model can still
-        // read the raw job text from the conversation history.
         system = `You are an expert career coach helping a job applicant.
 Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
-Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.`;
+Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet}`;
       } else {
-        // Tier 3 — no prior job context at all
-        system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.`;
+        system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
       }
 
       return streamText({
@@ -340,6 +386,99 @@ Read the full conversation history carefully and answer the user's follow-up que
         abortSignal,
         onFinish,
       }).toUIMessageStreamResponse({ originalMessages: uiMessages });
+    }
+
+    // ── generate-document: cover letter, email, or CV tips ──────────────────
+    if (intent === "generate-document") {
+      const ctx = getConversationJobContext(uiMessages, savedEntries);
+      const resumeText = (this.state as AgentState)?.resumeText;
+
+      const jobContext = ctx?.analysis
+        ? `Role: ${ctx.jobTitle} at ${ctx.company}\nCompany Overview: ${ctx.analysis.companyOverview}\nRole Expectations: ${ctx.analysis.roleExpectations}\nPositioning Tips: ${ctx.analysis.positioningTips}`
+        : ctx
+          ? `Role: ${ctx.jobTitle} at ${ctx.company}`
+          : "";
+
+      const resumeContext = resumeText
+        ? `\n\nCandidate's Resume:\n${resumeText.slice(0, 4000)}`
+        : "";
+
+      const docType = documentType ?? "cover-letter";
+      const docLabel =
+        docType === "cover-letter"
+          ? "Cover Letter"
+          : docType === "email"
+            ? "Application Email"
+            : "CV Improvement Tips";
+
+      const docTitle = ctx
+        ? `${docLabel} — ${ctx.jobTitle} at ${ctx.company}`
+        : docLabel;
+
+      const systemPrompts: Record<string, string> = {
+        "cover-letter": `You are a professional cover letter writer. Write a compelling, personalized cover letter for the candidate applying to this role. Use their resume details and the job analysis to tailor every paragraph. Output the cover letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML.`,
+        email: `You are a professional email drafter. Write a concise, professional application email for the candidate to send when applying to this role. Use their resume and the job analysis to personalize it. Output the email in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble — output ONLY the email HTML.`,
+        "cv-tips": `You are an expert CV/resume consultant. Based on the job requirements and the candidate's current resume, provide specific, actionable tips to improve their CV for this exact role. Format as HTML with headings (<h3>), bullet lists (<ul><li>), and bold text (<strong>) for key points. Do NOT include preamble — output ONLY the tips HTML.`,
+      };
+
+      const stream = createUIMessageStream({
+        originalMessages: uiMessages,
+        execute: async ({ writer }) => {
+          writer.write({ type: "start" });
+
+          const result = streamText({
+            model,
+            system: `${systemPrompts[docType] ?? systemPrompts["cover-letter"]}\n\nJob Context:\n${jobContext}${resumeContext}`,
+            messages: [
+              {
+                role: "user",
+                content: lastUser,
+              },
+            ],
+            abortSignal,
+          });
+
+          const chunks: string[] = [];
+
+          const textId = crypto.randomUUID();
+          writer.write({ type: "text-start", id: textId });
+
+          for await (const chunk of result.textStream) {
+            chunks.push(chunk);
+            writer.write({ type: "text-delta", id: textId, delta: chunk });
+          }
+
+          writer.write({ type: "text-end", id: textId });
+
+          const fullContent = chunks.join("");
+
+          const toolCallId = crypto.randomUUID();
+          writer.write({
+            type: "tool-input-start",
+            toolCallId,
+            toolName: "generateDocument",
+            providerExecuted: true,
+          });
+          writer.write({
+            type: "tool-input-available",
+            toolCallId,
+            toolName: "generateDocument",
+            input: { documentType: docType, title: docTitle },
+            providerExecuted: true,
+          });
+          writer.write({
+            type: "tool-output-available",
+            toolCallId,
+            output: { content: fullContent, format: "html" },
+            providerExecuted: true,
+          });
+
+          writer.write({ type: "finish", finishReason: "stop" });
+          await onFinish({} as Parameters<typeof onFinish>[0]);
+        },
+      });
+
+      return createUIMessageStreamResponse({ stream });
     }
 
     // ── analyze-job: single combined extract+analyze → save → stream card ────
@@ -402,7 +541,7 @@ Read the full conversation history carefully and answer the user's follow-up que
             };
             updated = [...current, entry];
           }
-          await this.setState({ researches: updated });
+          await this.setState({ ...this.state, researches: updated });
         } catch (err) {
           console.error("persist research failed:", err);
         }
