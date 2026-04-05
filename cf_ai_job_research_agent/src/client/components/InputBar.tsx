@@ -3,7 +3,6 @@ import { ArrowUp, Loader2, Paperclip, FileText, X } from "lucide-react";
 import { theme } from "../types";
 import { parseResumeFile } from "../utils/parseResumeFile";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 
 interface InputBarProps {
   onSend: (text: string) => void;
@@ -72,21 +71,39 @@ export default function InputBar({
     <div
       style={{
         flexShrink: 0,
-        background: theme.colors.background,
-        borderTop: `1px solid ${theme.colors.border}`,
-        padding: "12px 16px",
+        padding: "10px 14px 14px",
         display: "flex",
         flexDirection: "column",
         gap: "8px",
+        background: theme.colors.background,
+        borderTop: `1px solid ${theme.colors.border}`,
       }}
     >
-      {/* Resume badge */}
+      {/* Resume chip */}
       {resumeFileName && (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <Badge variant="secondary" className="gap-1.5 max-w-[260px] pr-1">
-            <FileText size={11} />
+        <div style={{ display: "flex", alignItems: "center", paddingLeft: "2px" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              height: "28px",
+              padding: "0 4px 0 10px",
+              background: theme.colors.surface,
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: "20px",
+              maxWidth: "260px",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+              flexShrink: 0,
+            }}
+          >
+            <FileText size={12} color={theme.colors.textSecondary} style={{ flexShrink: 0 }} />
             <span
               style={{
+                fontSize: theme.font.size.sm,
+                fontFamily: theme.font.family,
+                color: theme.colors.text,
+                fontWeight: theme.font.weight.medium,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -99,11 +116,32 @@ export default function InputBar({
               type="button"
               onClick={onResumeRemove}
               title="Remove resume"
-              className="ml-0.5 rounded hover:bg-accent p-0.5 flex items-center justify-center border-none bg-transparent cursor-pointer"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "20px",
+                height: "20px",
+                borderRadius: "50%",
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                flexShrink: 0,
+                color: theme.colors.textMuted,
+                transition: "background 120ms ease, color 120ms ease",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
+                (e.currentTarget as HTMLButtonElement).style.color = theme.colors.text;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
+              }}
             >
-              <X size={10} />
+              <X size={11} />
             </button>
-          </Badge>
+          </div>
         </div>
       )}
 
@@ -112,14 +150,14 @@ export default function InputBar({
         style={{
           display: "flex",
           flexDirection: "row",
-          alignItems: "flex-end",
-          gap: "8px",
+          alignItems: "center",
+          gap: "6px",
           background: theme.colors.surface,
           border: focused
             ? `1.5px solid ${theme.colors.text}`
             : `1px solid ${theme.colors.border}`,
           borderRadius: "16px",
-          padding: "8px 10px",
+          padding: "8px 8px 8px 12px",
           transition: "border-color 150ms ease, box-shadow 150ms ease",
           boxShadow: focused
             ? "0 0 0 4px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.10)"
@@ -135,19 +173,41 @@ export default function InputBar({
         />
 
         {/* Attach */}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          disabled={uploadDisabled}
+        <button
           onClick={() => !uploadDisabled && fileInputRef.current?.click()}
-          className="shrink-0"
+          disabled={uploadDisabled}
+          title="Attach resume"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "28px",
+            height: "28px",
+            borderRadius: "8px",
+            border: "none",
+            background: "transparent",
+            cursor: uploadDisabled ? "not-allowed" : "pointer",
+            flexShrink: 0,
+            color: theme.colors.textMuted,
+            opacity: uploadDisabled ? 0.4 : 1,
+            transition: "background 120ms ease, color 120ms ease",
+          }}
+          onMouseEnter={(e) => {
+            if (!uploadDisabled) {
+              (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
+              (e.currentTarget as HTMLButtonElement).style.color = theme.colors.text;
+            }
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
+          }}
         >
-          {parsing ? (
-            <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} />
-          ) : (
-            <Paperclip size={16} />
-          )}
-        </Button>
+          {parsing
+            ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} />
+            : <Paperclip size={15} />
+          }
+        </button>
 
         {/* Textarea */}
         <textarea
@@ -167,27 +227,47 @@ export default function InputBar({
             fontFamily: theme.font.family,
             fontSize: theme.font.size.base,
             color: theme.colors.text,
-            lineHeight: String(theme.font.lineHeight.base),
+            lineHeight: "1.5",
             minHeight: "24px",
             maxHeight: "120px",
             resize: "none",
+            padding: "0",
+            margin: "0",
+            verticalAlign: "middle",
           }}
         />
 
         {/* Send */}
-        <Button
-          size="icon-sm"
-          disabled={!canSend}
+        <button
           onClick={handleSend}
-          variant={canSend ? "default" : "secondary"}
-          className="shrink-0"
+          disabled={!canSend}
+          title="Send"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "30px",
+            height: "30px",
+            borderRadius: "10px",
+            border: "none",
+            background: canSend ? theme.colors.text : theme.colors.surfaceElevated,
+            cursor: canSend ? "pointer" : "not-allowed",
+            flexShrink: 0,
+            transition: "background 150ms ease, transform 100ms ease",
+            color: canSend ? "#ffffff" : theme.colors.textMuted,
+          }}
+          onMouseEnter={(e) => {
+            if (canSend) (e.currentTarget as HTMLButtonElement).style.transform = "scale(1.06)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.transform = "scale(1)";
+          }}
         >
-          {disabled ? (
-            <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
-          ) : (
-            <ArrowUp size={14} />
-          )}
-        </Button>
+          {disabled
+            ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+            : <ArrowUp size={14} />
+          }
+        </button>
       </div>
 
       {parseError && (
@@ -196,7 +276,8 @@ export default function InputBar({
             fontSize: theme.font.size.xs,
             color: theme.colors.danger,
             fontFamily: theme.font.family,
-            margin: 0,
+            margin: "0",
+            paddingLeft: "2px",
           }}
         >
           {parseError}
