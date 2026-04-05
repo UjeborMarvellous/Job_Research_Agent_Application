@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { MessageSquare, Plus, Clock, Trash2, FileSearch, PanelLeftClose, PanelLeft } from "lucide-react";
+import { MessageSquare, Plus, Clock, Trash2, MoreVertical, FileSearch, PanelLeftClose, PanelLeft } from "lucide-react";
 import { theme } from "../types";
 import type { ConversationMeta } from "../types";
-import ResumeUpload from "./ResumeUpload";
 
 interface SidebarProps {
   conversations: ConversationMeta[];
@@ -10,9 +9,6 @@ interface SidebarProps {
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
-  resumeFileName?: string;
-  onResumeExtracted: (text: string, fileName: string) => void;
-  onResumeRemove: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }
@@ -34,14 +30,11 @@ export default function Sidebar({
   onNewConversation,
   onSelectConversation,
   onDeleteConversation,
-  resumeFileName,
-  onResumeExtracted,
-  onResumeRemove,
   collapsed,
   onToggleCollapse,
 }: SidebarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const sortedConvos = [...conversations].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
@@ -214,12 +207,18 @@ export default function Sidebar({
             const isActive = convo.id === activeConversationId;
             const isHovered = hoveredId === convo.id;
             return (
-              <button
+              <div
                 key={convo.id}
-                onClick={() => onSelectConversation(convo.id)}
+                onClick={() => {
+                  setMenuOpenId(null);
+                  onSelectConversation(convo.id);
+                }}
                 onMouseEnter={() => setHoveredId(convo.id)}
                 onMouseLeave={() => setHoveredId(null)}
+                role="button"
+                tabIndex={0}
                 style={{
+                  position: "relative",
                   display: "block",
                   width: "100%",
                   textAlign: "left",
@@ -239,148 +238,110 @@ export default function Sidebar({
                   transition: theme.transition,
                 }}
               >
-                {confirmDeleteId === convo.id ? (
-                  <div
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span
                     style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
+                      fontSize: theme.font.size.base,
+                      fontWeight: isActive
+                        ? theme.font.weight.semibold
+                        : theme.font.weight.medium,
+                      color: isActive ? theme.colors.orange : theme.colors.text,
+                      fontFamily: theme.font.family,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      flex: 1,
                     }}
                   >
-                    <span
-                      style={{
-                        fontSize: theme.font.size.sm,
-                        color: theme.colors.danger,
-                        fontFamily: theme.font.family,
+                    {convo.title}
+                  </span>
+                  {menuOpenId !== convo.id && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(convo.id);
                       }}
-                    >
-                      Delete this conversation?
-                    </span>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteConversation(convo.id);
-                          setConfirmDeleteId(null);
-                        }}
-                        style={{
-                          flex: 1,
-                          padding: "4px 0",
-                          fontSize: theme.font.size.xs,
-                          fontFamily: theme.font.family,
-                          color: theme.colors.white,
-                          background: theme.colors.danger,
-                          border: "none",
-                          borderRadius: theme.radius.sm,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Delete
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmDeleteId(null);
-                        }}
-                        style={{
-                          flex: 1,
-                          padding: "4px 0",
-                          fontSize: theme.font.size.xs,
-                          fontFamily: theme.font.family,
-                          color: theme.colors.textSecondary,
-                          background: theme.colors.surfaceElevated,
-                          border: `1px solid ${theme.colors.border}`,
-                          borderRadius: theme.radius.sm,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: theme.font.size.base,
-                          fontWeight: isActive
-                            ? theme.font.weight.semibold
-                            : theme.font.weight.medium,
-                          color: isActive ? theme.colors.orange : theme.colors.text,
-                          fontFamily: theme.font.family,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          flex: 1,
-                        }}
-                      >
-                        {convo.title}
-                      </span>
-                      {isHovered && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDeleteId(convo.id);
-                          }}
-                          title="Delete conversation"
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            width: "20px",
-                            height: "20px",
-                            background: theme.colors.dangerDim,
-                            border: "none",
-                            cursor: "pointer",
-                            borderRadius: theme.radius.sm,
-                            flexShrink: 0,
-                            marginLeft: "4px",
-                          }}
-                        >
-                          <Trash2 size={11} color={theme.colors.danger} />
-                        </button>
-                      )}
-                    </div>
-                    <div
+                      title="More options"
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: "4px",
-                        marginTop: "3px",
+                        justifyContent: "center",
+                        width: "20px",
+                        height: "20px",
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        borderRadius: theme.radius.sm,
+                        flexShrink: 0,
+                        marginLeft: "4px",
                       }}
                     >
-                      <Clock size={10} color={theme.colors.textMuted} />
-                      <span
-                        style={{
-                          fontSize: theme.font.size.xs,
-                          color: theme.colors.textMuted,
-                          fontFamily: theme.font.family,
-                        }}
-                      >
-                        {relativeTime(convo.updatedAt)}
-                      </span>
-                    </div>
-                  </>
+                      <MoreVertical size={13} color={theme.colors.textMuted} />
+                    </button>
+                  )}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    marginTop: "3px",
+                  }}
+                >
+                  <Clock size={10} color={theme.colors.textMuted} />
+                  <span
+                    style={{
+                      fontSize: theme.font.size.xs,
+                      color: theme.colors.textMuted,
+                      fontFamily: theme.font.family,
+                    }}
+                  >
+                    {relativeTime(convo.updatedAt)}
+                  </span>
+                </div>
+
+                {menuOpenId === convo.id && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteConversation(convo.id);
+                      setMenuOpenId(null);
+                    }}
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      padding: "0 14px",
+                      background: theme.colors.dangerDim,
+                      borderLeft: `1px solid ${theme.colors.dangerBorder}`,
+                      border: "none",
+                      borderRadius: `0 0 0 ${theme.radius.sm}`,
+                      cursor: "pointer",
+                      fontFamily: theme.font.family,
+                      fontSize: theme.font.size.sm,
+                      fontWeight: theme.font.weight.medium,
+                      color: theme.colors.danger,
+                    }}
+                  >
+                    <Trash2 size={12} color={theme.colors.danger} />
+                    Delete
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })
         )}
       </div>
-
-      {/* Resume upload */}
-      <ResumeUpload
-        currentFileName={resumeFileName}
-        onResumeExtracted={onResumeExtracted}
-        onRemove={onResumeRemove}
-      />
     </div>
   );
 }

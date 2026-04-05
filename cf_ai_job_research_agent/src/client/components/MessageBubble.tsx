@@ -3,6 +3,7 @@ import { Loader2, FileText, ExternalLink } from "lucide-react";
 import { getToolName, isToolUIPart } from "ai";
 import { theme } from "../types";
 import type { UIMessage, JobAnalysis } from "../types";
+import AgentStepRow from "./AgentStepRow";
 import ResearchCard from "./ResearchCard";
 
 function looksLikeRawFunctionCallJson(text: string): boolean {
@@ -93,6 +94,24 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
             }
 
             const aiPart = part as Parameters<typeof isToolUIPart>[0];
+            if (isToolUIPart(aiPart) && getToolName(aiPart) === "agentStep") {
+              const input = aiPart.input as { label?: string } | undefined;
+              const label = input?.label?.trim() || "Working…";
+              if (aiPart.state === "output-available") {
+                const out = aiPart.output as { ok?: boolean } | undefined;
+                const ok = out?.ok !== false;
+                return (
+                  <AgentStepRow key={index} label={label} state={ok ? "done" : "error"} />
+                );
+              }
+              if (
+                aiPart.state === "input-streaming" ||
+                aiPart.state === "input-available"
+              ) {
+                return <AgentStepRow key={index} label={label} state="active" />;
+              }
+            }
+
             if (isToolUIPart(aiPart) && getToolName(aiPart) === "analyzeJobPosting") {
               if (aiPart.state === "output-available") {
                 const input = aiPart.input as {

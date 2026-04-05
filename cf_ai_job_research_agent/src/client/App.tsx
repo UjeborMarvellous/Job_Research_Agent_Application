@@ -29,14 +29,6 @@ function loadActiveSession(convos: ConversationMeta[]): string {
   return crypto.randomUUID();
 }
 
-function truncateTitle(text: string, max = 50): string {
-  const trimmed = text.replace(/\s+/g, " ").trim();
-  if (trimmed.length <= max) return trimmed;
-  const cut = trimmed.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut) + "…";
-}
-
 // ─── Inner component: keyed by sessionId so hooks fully reset on switch ──────
 
 interface ChatSessionProps {
@@ -45,22 +37,28 @@ interface ChatSessionProps {
   onResumeStateChange: (fileName: string | undefined) => void;
   onOpenDocument: (doc: { title: string; content: string }) => void;
   sendRef: React.MutableRefObject<((text: string) => void) | null>;
+  resumeFileName?: string;
+  onResumeExtracted: (text: string, fileName: string) => void;
+  onResumeRemove: () => void;
 }
 
-function ChatSession({ sessionId, onTitleUpdate, onResumeStateChange, onOpenDocument, sendRef }: ChatSessionProps) {
+function ChatSession({
+  sessionId,
+  onTitleUpdate,
+  onResumeStateChange,
+  onOpenDocument,
+  sendRef,
+  resumeFileName,
+  onResumeExtracted,
+  onResumeRemove,
+}: ChatSessionProps) {
   const { messages, sendMessage, agentState, isStreaming } =
     useJobAgent(sessionId);
 
-  const prevResearchCount = useRef(agentState.researches.length);
-
   useEffect(() => {
-    const entries = agentState.researches;
-    if (entries.length > prevResearchCount.current && entries.length > 0) {
-      const latest = entries[entries.length - 1];
-      onTitleUpdate(`${latest.jobTitle} at ${latest.company}`);
-    }
-    prevResearchCount.current = entries.length;
-  }, [agentState.researches, onTitleUpdate]);
+    const t = agentState.sidebarTitle?.trim();
+    if (t) onTitleUpdate(t);
+  }, [agentState.sidebarTitle, onTitleUpdate]);
 
   useEffect(() => {
     onResumeStateChange(agentState.resumeFileName);
@@ -68,12 +66,9 @@ function ChatSession({ sessionId, onTitleUpdate, onResumeStateChange, onOpenDocu
 
   const handleSend = useCallback(
     (text: string) => {
-      if (messages.length === 0) {
-        onTitleUpdate(truncateTitle(text));
-      }
       sendMessage({ text });
     },
-    [messages.length, sendMessage, onTitleUpdate],
+    [sendMessage],
   );
 
   useEffect(() => {
@@ -87,6 +82,9 @@ function ChatSession({ sessionId, onTitleUpdate, onResumeStateChange, onOpenDocu
       isStreaming={isStreaming}
       onSend={handleSend}
       onOpenDocument={onOpenDocument}
+      resumeFileName={resumeFileName}
+      onResumeExtracted={onResumeExtracted}
+      onResumeRemove={onResumeRemove}
     />
   );
 }
@@ -190,8 +188,10 @@ export default function App() {
   );
 
   const handleResumeExtracted = useCallback((text: string, fileName: string) => {
+    const MAX_RESUME_CHARS = 8000;
+    const capped = text.length > MAX_RESUME_CHARS ? text.slice(0, MAX_RESUME_CHARS) : text;
     setResumeFileName(fileName);
-    sendRef.current?.(`[resume-upload:${fileName}] ${text}`);
+    sendRef.current?.(`[resume-upload:${fileName}] ${capped}`);
   }, []);
 
   const handleResumeRemove = useCallback(() => {
@@ -226,9 +226,6 @@ export default function App() {
         onNewConversation={handleNewConversation}
         onSelectConversation={handleSelectConversation}
         onDeleteConversation={handleDeleteConversation}
-        resumeFileName={resumeFileName}
-        onResumeExtracted={handleResumeExtracted}
-        onResumeRemove={handleResumeRemove}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((p) => !p)}
       />
@@ -239,6 +236,9 @@ export default function App() {
         onResumeStateChange={handleResumeStateChange}
         onOpenDocument={handleOpenDocument}
         sendRef={sendRef}
+        resumeFileName={resumeFileName}
+        onResumeExtracted={handleResumeExtracted}
+        onResumeRemove={handleResumeRemove}
       />
       {editorOpen && editorDocument && (
         <DocumentEditor
