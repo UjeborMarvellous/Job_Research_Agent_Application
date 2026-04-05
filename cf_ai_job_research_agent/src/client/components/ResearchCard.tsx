@@ -1,14 +1,9 @@
 import React from "react";
-import {
-  Building2,
-  Target,
-  Leaf,
-  AlertTriangle,
-  MessageSquare,
-  Lightbulb,
-} from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { theme } from "../types";
 import type { JobAnalysis } from "../types";
+import { Card, CardContent, CardHeader } from "./ui/card";
+import { Separator } from "./ui/separator";
 
 interface ResearchCardProps {
   data: JobAnalysis;
@@ -17,50 +12,42 @@ interface ResearchCardProps {
 }
 
 interface SectionBlockProps {
-  icon: React.ReactNode;
   label: string;
   children: React.ReactNode;
-  variant: "default" | "danger";
+  variant?: "default" | "danger";
 }
 
-function SectionBlock({ icon, label, children, variant }: SectionBlockProps) {
+function SectionBlock({ label, children, variant = "default" }: SectionBlockProps) {
   return (
-    <div style={{ marginBottom: "16px" }}>
-      <div
+    <div style={{ marginBottom: "20px" }}>
+      <span
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
+          display: "block",
+          fontSize: "11px",
+          fontWeight: theme.font.weight.semibold,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: theme.colors.textMuted,
+          fontFamily: theme.font.family,
+          marginBottom: "8px",
         }}
       >
-        {icon}
-        <span
+        {label}
+      </span>
+      {variant === "danger" ? (
+        <div
           style={{
-            fontSize: theme.font.size.sm,
-            fontWeight: theme.font.weight.semibold,
-            color: theme.colors.text,
-            fontFamily: theme.font.family,
+            background: theme.colors.dangerDim,
+            border: `1px solid ${theme.colors.dangerBorder}`,
+            borderRadius: theme.radius.sm,
+            padding: "10px 12px",
           }}
         >
-          {label}
-        </span>
-      </div>
-      <div style={{ marginLeft: "20px", marginTop: "6px" }}>
-        {variant === "danger" ? (
-          <div
-            style={{
-              background: theme.colors.dangerDim,
-              border: `1px solid ${theme.colors.dangerBorder}`,
-              borderRadius: theme.radius.sm,
-              padding: "8px 10px",
-            }}
-          >
-            {children}
-          </div>
-        ) : (
-          children
-        )}
-      </div>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -84,149 +71,103 @@ function isDataEmpty(data: JobAnalysis): boolean {
 export default function ResearchCard({ data, company, jobTitle }: ResearchCardProps) {
   if (isDataEmpty(data)) {
     return (
-      <div
-        style={{
-          background: theme.colors.surfaceElevated,
-          border: `1px solid ${theme.colors.border}`,
-          borderRadius: theme.radius.md,
-          padding: "16px 20px",
-          marginTop: "8px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <AlertTriangle size={14} color={theme.colors.danger} />
-          <span
-            style={{
-              fontSize: theme.font.size.base,
-              color: theme.colors.textSecondary,
-              fontFamily: theme.font.family,
-            }}
-          >
-            Analysis unavailable
-          </span>
-        </div>
-        <p
-          style={{
-            fontSize: theme.font.size.sm,
-            color: theme.colors.textMuted,
-            marginTop: "4px",
-            fontFamily: theme.font.family,
-          }}
-        >
-          Please try again or rephrase your message.
-        </p>
-      </div>
+      <Card className="mt-2 max-w-[82%]">
+        <CardContent className="pt-4">
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <AlertTriangle size={14} color={theme.colors.danger} />
+            <span style={{ fontSize: theme.font.size.base, color: theme.colors.textSecondary, fontFamily: theme.font.family }}>
+              Analysis unavailable
+            </span>
+          </div>
+          <p style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, marginTop: "4px", fontFamily: theme.font.family }}>
+            Please try again or rephrase your message.
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   const pStyle: React.CSSProperties = {
-    fontSize: theme.font.size.base,
+    fontSize: theme.font.size.md,
     color: theme.colors.textSecondary,
-    lineHeight: String(theme.font.lineHeight.relaxed),
+    lineHeight: "1.6",
     fontFamily: theme.font.family,
+    margin: 0,
   };
 
   return (
-    <div
-      style={{
-        background: theme.colors.surfaceElevated,
-        border: `1px solid ${theme.colors.border}`,
-        borderLeft: `3px solid ${theme.colors.orange}`,
-        borderRadius: theme.radius.md,
-        padding: "20px 24px",
-        margin: "8px 0",
-        maxWidth: "82%",
-      }}
-    >
-      <p
-        style={{
-          fontSize: theme.font.size.lg,
-          fontWeight: theme.font.weight.bold,
-          color: theme.colors.text,
-          fontFamily: theme.font.family,
-        }}
-      >
-        {company}
-      </p>
-      <p
-        style={{
-          fontSize: theme.font.size.md,
-          color: theme.colors.textSecondary,
-          marginTop: "4px",
-          fontFamily: theme.font.family,
-        }}
-      >
-        {jobTitle}
-      </p>
-      <div
-        style={{
-          borderTop: `1px solid ${theme.colors.border}`,
-          margin: "16px 0",
-        }}
-      />
+    <Card className="mount-anim my-2 max-w-[82%]">
+      <CardHeader className="pb-3">
+        {/* Document header — company left, job title right */}
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "12px" }}>
+          <span
+            style={{
+              fontSize: "18px",
+              fontWeight: theme.font.weight.bold,
+              color: theme.colors.text,
+              fontFamily: theme.font.family,
+            }}
+          >
+            {company}
+          </span>
+          <span
+            style={{
+              fontSize: theme.font.size.sm,
+              color: theme.colors.textSecondary,
+              fontFamily: theme.font.family,
+              flexShrink: 0,
+            }}
+          >
+            {jobTitle}
+          </span>
+        </div>
+      </CardHeader>
 
-      <SectionBlock
-        icon={<Building2 size={14} color={theme.colors.orange} />}
-        label="Company Overview"
-        variant="default"
-      >
-        <p style={pStyle}>{data.companyOverview}</p>
-      </SectionBlock>
+      <Separator />
 
-      <SectionBlock
-        icon={<Target size={14} color={theme.colors.orange} />}
-        label="Role Expectations"
-        variant="default"
-      >
-        <p style={pStyle}>{data.roleExpectations}</p>
-      </SectionBlock>
+      <CardContent className="pt-5">
+        <SectionBlock label="Company Overview">
+          <p style={pStyle}>{data.companyOverview}</p>
+        </SectionBlock>
 
-      <SectionBlock
-        icon={<Leaf size={14} color={theme.colors.orange} />}
-        label="Culture Signals"
-        variant="default"
-      >
-        <p style={pStyle}>{data.cultureSignals}</p>
-      </SectionBlock>
+        <SectionBlock label="Role Expectations">
+          <p style={pStyle}>{data.roleExpectations}</p>
+        </SectionBlock>
 
-      <SectionBlock
-        icon={<AlertTriangle size={14} color={theme.colors.danger} />}
-        label="Red Flags"
-        variant="danger"
-      >
-        <p style={pStyle}>{data.potentialRedFlags}</p>
-      </SectionBlock>
+        <SectionBlock label="Culture Signals">
+          <p style={pStyle}>{data.cultureSignals}</p>
+        </SectionBlock>
 
-      <SectionBlock
-        icon={<MessageSquare size={14} color={theme.colors.orange} />}
-        label="Questions to Ask"
-        variant="default"
-      >
-        <ol style={{ paddingLeft: "16px", margin: 0 }}>
-          {data.questionsToAsk.map((q, i) => (
-            <li
-              key={i}
-              style={{
-                marginBottom: "4px",
-                lineHeight: String(theme.font.lineHeight.relaxed),
-                fontSize: theme.font.size.base,
-                color: theme.colors.textSecondary,
-                fontFamily: theme.font.family,
-              }}
-            >
-              {q}
-            </li>
-          ))}
-        </ol>
-      </SectionBlock>
+        <SectionBlock label="Red Flags" variant="danger">
+          <p style={{ ...pStyle, color: theme.colors.danger }}>{data.potentialRedFlags}</p>
+        </SectionBlock>
 
-      <SectionBlock
-        icon={<Lightbulb size={14} color={theme.colors.orange} />}
-        label="How to Position Yourself"
-        variant="default"
-      >
-        <p style={pStyle}>{data.positioningTips}</p>
-      </SectionBlock>
-    </div>
+        <SectionBlock label="Questions to Ask">
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {data.questionsToAsk.map((q, i) => (
+              <div key={i} style={{ display: "flex", gap: "10px" }}>
+                <span
+                  style={{
+                    color: theme.colors.textSecondary,
+                    fontWeight: theme.font.weight.semibold,
+                    fontSize: theme.font.size.md,
+                    fontFamily: theme.font.family,
+                    flexShrink: 0,
+                    lineHeight: "1.6",
+                  }}
+                >
+                  {i + 1}.
+                </span>
+                <span style={pStyle}>{q}</span>
+              </div>
+            ))}
+          </div>
+        </SectionBlock>
+
+        <SectionBlock label="How to Position Yourself">
+          <p style={{ ...pStyle, marginBottom: 0 }}>{data.positioningTips}</p>
+        </SectionBlock>
+      </CardContent>
+    </Card>
   );
 }

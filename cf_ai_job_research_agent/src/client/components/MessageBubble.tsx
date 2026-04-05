@@ -5,6 +5,7 @@ import { theme } from "../types";
 import type { UIMessage, JobAnalysis } from "../types";
 import AgentStepRow from "./AgentStepRow";
 import ResearchCard from "./ResearchCard";
+import { Button } from "./ui/button";
 
 function looksLikeRawFunctionCallJson(text: string): boolean {
   const t = text.trim();
@@ -30,6 +31,7 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
 
       return (
         <div
+          className="mount-anim"
           style={{
             display: "flex",
             justifyContent: "flex-end",
@@ -38,17 +40,17 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
         >
           <div
             style={{
-              background: theme.colors.orangeDim,
-              border: `1px solid ${theme.colors.orangeBorder}`,
-              borderRadius: theme.radius.lg,
-              padding: "10px 14px",
+              background: theme.colors.text,
+              borderRadius: "18px",
+              padding: "10px 16px",
               maxWidth: "68%",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
             }}
           >
             <p
               style={{
                 fontSize: theme.font.size.base,
-                color: theme.colors.text,
+                color: "#ffffff",
                 lineHeight: String(theme.font.lineHeight.relaxed),
                 fontFamily: theme.font.family,
                 whiteSpace: "pre-wrap",
@@ -64,6 +66,7 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
     if (message.role === "assistant") {
       return (
         <div
+          className="mount-anim"
           style={{
             display: "flex",
             justifyContent: "flex-start",
@@ -74,18 +77,19 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
         >
           {message.parts?.map((part, index) => {
             if (part.type === "text" && part.text && part.text.trim() !== "") {
-              if (looksLikeRawFunctionCallJson(part.text)) {
-                return null;
-              }
+              if (looksLikeRawFunctionCallJson(part.text)) return null;
               return (
                 <p
                   key={index}
                   style={{
-                    fontSize: theme.font.size.base,
-                    color: theme.colors.textSecondary,
+                    fontSize: "15px",
+                    color: theme.colors.text,
                     lineHeight: String(theme.font.lineHeight.relaxed),
                     fontFamily: theme.font.family,
                     whiteSpace: "pre-wrap",
+                    paddingLeft: "14px",
+                    borderLeft: `2px solid ${theme.colors.border}`,
+                    marginBottom: "8px",
                   }}
                 >
                   {part.text}
@@ -104,20 +108,14 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
                   <AgentStepRow key={index} label={label} state={ok ? "done" : "error"} />
                 );
               }
-              if (
-                aiPart.state === "input-streaming" ||
-                aiPart.state === "input-available"
-              ) {
+              if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
                 return <AgentStepRow key={index} label={label} state="active" />;
               }
             }
 
             if (isToolUIPart(aiPart) && getToolName(aiPart) === "analyzeJobPosting") {
               if (aiPart.state === "output-available") {
-                const input = aiPart.input as {
-                  jobTitle?: string;
-                  company?: string;
-                };
+                const input = aiPart.input as { jobTitle?: string; company?: string };
                 return (
                   <ResearchCard
                     key={index}
@@ -127,33 +125,14 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
                   />
                 );
               }
-              if (
-                aiPart.state === "input-streaming" ||
-                aiPart.state === "input-available"
-              ) {
+              if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
                 return (
                   <div
                     key={index}
-                    style={{
-                      display: "flex",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "4px 0",
-                    }}
+                    style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}
                   >
-                    <Loader2
-                      size={12}
-                      color={theme.colors.textMuted}
-                      style={{ animation: "spin 1s linear infinite" }}
-                    />
-                    <span
-                      style={{
-                        fontSize: theme.font.size.sm,
-                        color: theme.colors.textMuted,
-                        fontFamily: theme.font.family,
-                      }}
-                    >
+                    <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+                    <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
                       Analyzing role...
                     </span>
                   </div>
@@ -172,14 +151,12 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
                 input?: { jobTitle?: string; company?: string };
                 output?: unknown;
               };
-              const company = typedPart.input?.company ?? "";
-              const jobTitle = typedPart.input?.jobTitle ?? "";
               return (
                 <ResearchCard
                   key={index}
                   data={typedPart.output as JobAnalysis}
-                  company={company}
-                  jobTitle={jobTitle}
+                  company={typedPart.input?.company ?? ""}
+                  jobTitle={typedPart.input?.jobTitle ?? ""}
                 />
               );
             }
@@ -192,26 +169,10 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
               return (
                 <div
                   key={index}
-                  style={{
-                    display: "flex",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "4px 0",
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}
                 >
-                  <Loader2
-                    size={12}
-                    color={theme.colors.textMuted}
-                    style={{ animation: "spin 1s linear infinite" }}
-                  />
-                  <span
-                    style={{
-                      fontSize: theme.font.size.sm,
-                      color: theme.colors.textMuted,
-                      fontFamily: theme.font.family,
-                    }}
-                  >
+                  <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+                  <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
                     Analyzing role...
                   </span>
                 </div>
@@ -234,12 +195,12 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
                       gap: "10px",
                       padding: "10px 14px",
                       marginTop: "8px",
-                      background: theme.colors.surfaceElevated,
+                      background: theme.colors.surface,
                       border: `1px solid ${theme.colors.border}`,
                       borderRadius: theme.radius.md,
                     }}
                   >
-                    <FileText size={18} color={theme.colors.orange} />
+                    <FileText size={16} color={theme.colors.textSecondary} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p
                         style={{
@@ -254,72 +215,30 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
                       >
                         {title}
                       </p>
-                      <p
-                        style={{
-                          fontSize: theme.font.size.xs,
-                          color: theme.colors.textMuted,
-                          fontFamily: theme.font.family,
-                          marginTop: "2px",
-                        }}
-                      >
+                      <p style={{ fontSize: theme.font.size.xs, color: theme.colors.textMuted, fontFamily: theme.font.family, marginTop: "2px" }}>
                         Ready to edit and export
                       </p>
                     </div>
                     {onOpenDocument && (
-                      <button
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={() => onOpenDocument({ title, content })}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "4px",
-                          padding: "5px 10px",
-                          background: theme.colors.orangeDim,
-                          border: `1px solid ${theme.colors.orangeBorder}`,
-                          borderRadius: theme.radius.sm,
-                          cursor: "pointer",
-                          transition: theme.transition,
-                          fontSize: theme.font.size.sm,
-                          color: theme.colors.orange,
-                          fontFamily: theme.font.family,
-                          fontWeight: theme.font.weight.medium,
-                          whiteSpace: "nowrap",
-                        }}
+                        className="gap-1.5 shrink-0"
                       >
-                        <ExternalLink size={12} />
+                        <ExternalLink size={11} />
                         Open in Editor
-                      </button>
+                      </Button>
                     )}
                   </div>
                 );
               }
 
-              if (
-                aiPart.state === "input-streaming" ||
-                aiPart.state === "input-available"
-              ) {
+              if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
                 return (
-                  <div
-                    key={index}
-                    style={{
-                      display: "flex",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "4px 0",
-                    }}
-                  >
-                    <Loader2
-                      size={12}
-                      color={theme.colors.textMuted}
-                      style={{ animation: "spin 1s linear infinite" }}
-                    />
-                    <span
-                      style={{
-                        fontSize: theme.font.size.sm,
-                        color: theme.colors.textMuted,
-                        fontFamily: theme.font.family,
-                      }}
-                    >
+                  <div key={index} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}>
+                    <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+                    <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
                       Generating document...
                     </span>
                   </div>
@@ -336,13 +255,7 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
     return null;
   } catch {
     return (
-      <div
-        style={{
-          color: theme.colors.textMuted,
-          fontSize: theme.font.size.sm,
-          fontFamily: theme.font.family,
-        }}
-      >
+      <div style={{ color: theme.colors.textMuted, fontSize: theme.font.size.sm, fontFamily: theme.font.family }}>
         Unable to display message.
       </div>
     );

@@ -1,0 +1,215 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: false;
+  darkTheme: false;
+  base: false;
+}
+
+/* ─── Shadcn CSS Variables (HSL) — Light / White + Black ─────────────────── */
+:root {
+  --background: 0 0% 100%;              /* pure white */
+  --foreground: 0 0% 6%;               /* near-black */
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 6%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 6%;
+  --primary: 0 0% 6%;                   /* black buttons */
+  --primary-foreground: 0 0% 100%;      /* white text on black */
+  --secondary: 0 0% 95%;               /* very light gray */
+  --secondary-foreground: 0 0% 10%;
+  --muted: 0 0% 95%;
+  --muted-foreground: 0 0% 45%;
+  --accent: 0 0% 93%;
+  --accent-foreground: 0 0% 10%;
+  --destructive: 0 84% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 88%;
+  --input: 0 0% 88%;
+  --ring: 0 0% 6%;
+  --radius: 0.625rem;
+
+  /* ── App-level tokens ── */
+  --color-background: #ffffff;
+  --color-surface: #fafafa;
+  --color-surface-elevated: #f0f0f0;
+  --color-surface-hover: #ebebeb;
+  --color-border: #e2e2e2;
+  --color-text: #0f0f0f;
+  --color-text-secondary: #555555;
+  --color-text-muted: #aaaaaa;
+  --color-danger: #dc2626;
+  --color-danger-dim: rgba(220, 38, 38, 0.06);
+  --color-danger-border: rgba(220, 38, 38, 0.20);
+  --color-success: #16a34a;
+  --color-white: #ffffff;
+
+  /* ── Shadow System — elevated panels on gray viewport ── */
+  --shadow-card: 0 2px 8px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.07);
+  --shadow-panel: 0 8px 32px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-modal: 0 16px 60px rgba(0,0,0,0.20), 0 8px 20px rgba(0,0,0,0.10);
+  --shadow-focus: 0 0 0 3px rgba(0,0,0,0.12);
+  --shadow-sidebar: 0 8px 32px rgba(0,0,0,0.11), 0 2px 8px rgba(0,0,0,0.07);
+  --shadow-topbar: 0 1px 0 rgba(0,0,0,0.07);
+  --shadow-inputbar: 0 -1px 0 rgba(0,0,0,0.07);
+
+  /* ── Viewport (behind panels) ── */
+  --color-viewport: #efefef;
+}
+
+/* ─── Tailwind v4 @theme — registers shadcn color tokens ─────────────────── */
+@theme {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+* {
+  border-color: hsl(var(--border));
+  box-sizing: border-box;
+}
+body {
+  background: var(--color-viewport);
+  color: hsl(var(--foreground));
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-surface-hover); }
+
+/* ─── Selection ────────────────────────────────────────────────────────────── */
+::selection { background: rgba(0, 0, 0, 0.08); }
+
+/* ─── Animations ───────────────────────────────────────────────────────────── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes shimmer {
+  0%   { background-position: -400% center; }
+  100% { background-position: 400% center; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50%       { opacity: 1; transform: translateY(-2px); }
+}
+
+/* ─── Shimmer text ────────────────────────────────────────────────────────── */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--color-text-muted) 0%,
+    var(--color-text-secondary) 40%,
+    var(--color-text-muted) 80%,
+    var(--color-text-muted) 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* ─── Radix DropdownMenu ──────────────────────────────────────────────────── */
+.DropdownMenuContent {
+  min-width: 140px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: var(--shadow-panel);
+  z-index: 50;
+  animation: fadeSlideUp 120ms ease;
+}
+.DropdownMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  outline: none;
+  transition: background 100ms ease;
+}
+.DropdownMenuItem:hover,
+.DropdownMenuItem:focus { background: var(--color-surface-elevated); color: var(--color-text); }
+.DropdownMenuItem.danger { color: var(--color-danger); }
+.DropdownMenuItem.danger:hover,
+.DropdownMenuItem.danger:focus { background: var(--color-danger-dim); }
+
+/* ─── Radix Tooltip ───────────────────────────────────────────────────────── */
+.TooltipContent {
+  background: var(--color-text);
+  color: var(--color-background);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  box-shadow: var(--shadow-panel);
+  animation: fadeSlideUp 100ms ease;
+}
+
+/* ─── Mount animation helper ─────────────────────────────────────────────── */
+.mount-anim {
+  animation: fadeSlideUp 200ms ease forwards;
+}
+
+/* ─── TipTap editor ──────────────────────────────────────────────────────── */
+.ProseMirror { min-height: 100%; outline: none; }
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: var(--color-text-muted);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.ProseMirror h1 { font-size: 1.6em; font-weight: 700; margin: 0.8em 0 0.4em; color: var(--color-text); }
+.ProseMirror h2 { font-size: 1.3em; font-weight: 600; margin: 0.7em 0 0.3em; color: var(--color-text); }
+.ProseMirror h3 { font-size: 1.1em; font-weight: 600; margin: 0.6em 0 0.3em; color: var(--color-text); }
+.ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin: 0.5em 0; }
+.ProseMirror li { margin: 0.2em 0; }
+.ProseMirror p { margin: 0.4em 0; }
+.ProseMirror strong { font-weight: 700; }
+.ProseMirror em { font-style: italic; }
+.ProseMirror u { text-decoration: underline; }
+.ProseMirror blockquote {
+  border-left: 2px solid var(--color-border);
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: var(--color-text-secondary);
+}
+
+/* ─── Placeholder ────────────────────────────────────────────────────────── */
+textarea::placeholder { color: var(--color-text-muted); }
+input::placeholder { color: var(--color-text-muted); }

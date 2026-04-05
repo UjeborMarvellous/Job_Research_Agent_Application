@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { theme } from "../types";
 import { exportAsPdf, exportAsDocx, exportAsTxt } from "../utils/exportDocument";
+import { Button } from "./ui/button";
+import { Separator } from "./ui/separator";
 
 interface DocumentEditorProps {
   document: { title: string; content: string };
@@ -32,7 +34,7 @@ interface DocumentEditorProps {
   onUpdateContent: (content: string) => void;
 }
 
-function ToolbarButton({
+function ToolbarBtn({
   onClick,
   active,
   title,
@@ -44,26 +46,14 @@ function ToolbarButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
+    <Button
+      variant={active ? "secondary" : "ghost"}
+      size="icon-sm"
       onClick={onClick}
       title={title}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "28px",
-        height: "28px",
-        background: active ? theme.colors.orangeDim : "transparent",
-        border: active
-          ? `1px solid ${theme.colors.orangeBorder}`
-          : "1px solid transparent",
-        borderRadius: theme.radius.sm,
-        cursor: "pointer",
-        transition: theme.transition,
-      }}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -92,7 +82,7 @@ export default function DocumentEditor({
           `line-height: ${theme.font.lineHeight.relaxed}`,
           "outline: none",
           "min-height: 100%",
-          "padding: 20px",
+          "padding: 24px",
         ].join("; "),
       },
     },
@@ -123,9 +113,6 @@ export default function DocumentEditor({
 
   if (!editor) return null;
 
-  const iconColor = theme.colors.textSecondary;
-  const activeColor = theme.colors.orange;
-
   return (
     <div
       style={{
@@ -136,6 +123,8 @@ export default function DocumentEditor({
         background: theme.colors.background,
         minWidth: "300px",
         maxWidth: "50%",
+        animation: "fadeSlideUp 250ms ease-out",
+        boxShadow: "-4px 0 24px rgba(0,0,0,0.08)",
       }}
     >
       {/* Header */}
@@ -146,12 +135,11 @@ export default function DocumentEditor({
           alignItems: "center",
           padding: "0 16px",
           borderBottom: `1px solid ${theme.colors.border}`,
-          background: theme.colors.surface,
           gap: "8px",
           flexShrink: 0,
         }}
       >
-        <FileText size={14} color={theme.colors.orange} />
+        <FileText size={14} color={theme.colors.textSecondary} />
         <span
           style={{
             flex: 1,
@@ -166,23 +154,9 @@ export default function DocumentEditor({
         >
           {doc.title}
         </span>
-        <button
-          onClick={onClose}
-          title="Close editor"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "28px",
-            height: "28px",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            borderRadius: theme.radius.sm,
-          }}
-        >
-          <X size={16} color={theme.colors.textMuted} />
-        </button>
+        <Button variant="ghost" size="icon-sm" onClick={onClose} title="Close editor">
+          <X size={15} />
+        </Button>
       </div>
 
       {/* Toolbar */}
@@ -198,122 +172,52 @@ export default function DocumentEditor({
           flexShrink: 0,
         }}
       >
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          active={editor.isActive("bold")}
-          title="Bold"
-        >
-          <Bold size={14} color={editor.isActive("bold") ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          active={editor.isActive("italic")}
-          title="Italic"
-        >
-          <Italic size={14} color={editor.isActive("italic") ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          active={editor.isActive("underline")}
-          title="Underline"
-        >
-          <UnderlineIcon size={14} color={editor.isActive("underline") ? activeColor : iconColor} />
-        </ToolbarButton>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive("bold")} title="Bold">
+          <Bold size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive("italic")} title="Italic">
+          <Italic size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive("underline")} title="Underline">
+          <UnderlineIcon size={13} />
+        </ToolbarBtn>
 
-        <div style={{ width: "1px", height: "20px", background: theme.colors.border, margin: "0 4px" }} />
+        <div style={{ width: "1px", height: "18px", background: theme.colors.border, margin: "0 4px", flexShrink: 0 }} />
 
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-          active={editor.isActive("heading", { level: 1 })}
-          title="Heading 1"
-        >
-          <Heading1 size={14} color={editor.isActive("heading", { level: 1 }) ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          active={editor.isActive("heading", { level: 2 })}
-          title="Heading 2"
-        >
-          <Heading2 size={14} color={editor.isActive("heading", { level: 2 }) ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          active={editor.isActive("heading", { level: 3 })}
-          title="Heading 3"
-        >
-          <Heading3 size={14} color={editor.isActive("heading", { level: 3 }) ? activeColor : iconColor} />
-        </ToolbarButton>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} active={editor.isActive("heading", { level: 1 })} title="Heading 1">
+          <Heading1 size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive("heading", { level: 2 })} title="Heading 2">
+          <Heading2 size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} active={editor.isActive("heading", { level: 3 })} title="Heading 3">
+          <Heading3 size={13} />
+        </ToolbarBtn>
 
-        <div style={{ width: "1px", height: "20px", background: theme.colors.border, margin: "0 4px" }} />
+        <div style={{ width: "1px", height: "18px", background: theme.colors.border, margin: "0 4px", flexShrink: 0 }} />
 
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          active={editor.isActive("bulletList")}
-          title="Bullet list"
-        >
-          <List size={14} color={editor.isActive("bulletList") ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          active={editor.isActive("orderedList")}
-          title="Numbered list"
-        >
-          <ListOrdered size={14} color={editor.isActive("orderedList") ? activeColor : iconColor} />
-        </ToolbarButton>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive("bulletList")} title="Bullet list">
+          <List size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive("orderedList")} title="Numbered list">
+          <ListOrdered size={13} />
+        </ToolbarBtn>
 
-        <div style={{ width: "1px", height: "20px", background: theme.colors.border, margin: "0 4px" }} />
+        <div style={{ width: "1px", height: "18px", background: theme.colors.border, margin: "0 4px", flexShrink: 0 }} />
 
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setTextAlign("left").run()}
-          active={editor.isActive({ textAlign: "left" })}
-          title="Align left"
-        >
-          <AlignLeft size={14} color={editor.isActive({ textAlign: "left" }) ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setTextAlign("center").run()}
-          active={editor.isActive({ textAlign: "center" })}
-          title="Align center"
-        >
-          <AlignCenter size={14} color={editor.isActive({ textAlign: "center" }) ? activeColor : iconColor} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setTextAlign("right").run()}
-          active={editor.isActive({ textAlign: "right" })}
-          title="Align right"
-        >
-          <AlignRight size={14} color={editor.isActive({ textAlign: "right" }) ? activeColor : iconColor} />
-        </ToolbarButton>
+        <ToolbarBtn onClick={() => editor.chain().focus().setTextAlign("left").run()} active={editor.isActive({ textAlign: "left" })} title="Align left">
+          <AlignLeft size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().setTextAlign("center").run()} active={editor.isActive({ textAlign: "center" })} title="Align center">
+          <AlignCenter size={13} />
+        </ToolbarBtn>
+        <ToolbarBtn onClick={() => editor.chain().focus().setTextAlign("right").run()} active={editor.isActive({ textAlign: "right" })} title="Align right">
+          <AlignRight size={13} />
+        </ToolbarBtn>
       </div>
 
       {/* Editor area */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          background: theme.colors.background,
-        }}
-      >
-        <style>{`
-          .ProseMirror { min-height: 100%; }
-          .ProseMirror p.is-editor-empty:first-child::before {
-            color: ${theme.colors.textMuted};
-            content: attr(data-placeholder);
-            float: left;
-            height: 0;
-            pointer-events: none;
-          }
-          .ProseMirror h1 { font-size: 1.6em; font-weight: 700; margin: 0.8em 0 0.4em; color: ${theme.colors.text}; }
-          .ProseMirror h2 { font-size: 1.3em; font-weight: 600; margin: 0.7em 0 0.3em; color: ${theme.colors.text}; }
-          .ProseMirror h3 { font-size: 1.1em; font-weight: 600; margin: 0.6em 0 0.3em; color: ${theme.colors.text}; }
-          .ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin: 0.5em 0; }
-          .ProseMirror li { margin: 0.2em 0; }
-          .ProseMirror p { margin: 0.4em 0; }
-          .ProseMirror strong { font-weight: 700; }
-          .ProseMirror em { font-style: italic; }
-          .ProseMirror u { text-decoration: underline; }
-          .ProseMirror blockquote { border-left: 3px solid ${theme.colors.orangeBorder}; padding-left: 1em; margin: 0.5em 0; color: ${theme.colors.textSecondary}; }
-        `}</style>
+      <div style={{ flex: 1, overflowY: "auto", background: theme.colors.background }}>
         <EditorContent editor={editor} />
       </div>
 
@@ -330,61 +234,43 @@ export default function DocumentEditor({
         }}
       >
         <Download size={13} color={theme.colors.textMuted} />
-        <span
-          style={{
-            fontSize: theme.font.size.sm,
-            color: theme.colors.textSecondary,
-            fontFamily: theme.font.family,
-            marginRight: "4px",
-          }}
-        >
+        <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textSecondary, fontFamily: theme.font.family, marginRight: "4px" }}>
           Export:
         </span>
-        <ExportButton label="PDF" icon={<FileDown size={12} />} onClick={() => handleExport("pdf")} loading={exporting === "pdf"} />
-        <ExportButton label="DOCX" icon={<FileText size={12} />} onClick={() => handleExport("docx")} loading={exporting === "docx"} />
-        <ExportButton label="TXT" icon={<FileType size={12} />} onClick={() => handleExport("txt")} loading={exporting === "txt"} />
+
+        <Button
+          variant="default"
+          size="sm"
+          onClick={() => handleExport("pdf")}
+          disabled={!!exporting}
+          className="gap-1.5"
+        >
+          {exporting === "pdf" ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileDown size={11} />}
+          PDF
+        </Button>
+
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => handleExport("docx")}
+          disabled={!!exporting}
+          className="gap-1.5"
+        >
+          {exporting === "docx" ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileText size={11} />}
+          DOCX
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => handleExport("txt")}
+          disabled={!!exporting}
+          className="gap-1.5"
+        >
+          {exporting === "txt" ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <FileType size={11} />}
+          TXT
+        </Button>
       </div>
     </div>
-  );
-}
-
-function ExportButton({
-  label,
-  icon,
-  onClick,
-  loading,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  loading?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={loading}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "4px",
-        padding: "4px 10px",
-        background: theme.colors.surfaceElevated,
-        border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radius.sm,
-        cursor: loading ? "wait" : "pointer",
-        transition: theme.transition,
-        fontSize: theme.font.size.sm,
-        color: theme.colors.textSecondary,
-        fontFamily: theme.font.family,
-        opacity: loading ? 0.6 : 1,
-      }}
-    >
-      {loading ? (
-        <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
-      ) : (
-        icon
-      )}
-      {label}
-    </button>
   );
 }
