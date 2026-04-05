@@ -60,6 +60,8 @@ export interface AgentState {
   researches: ResearchEntry[];
   resumeText?: string;
   resumeFileName?: string;
+  /** Short label for the conversation list (set by the agent, not raw user text). */
+  sidebarTitle?: string;
 }
 
 export interface DocumentMeta {

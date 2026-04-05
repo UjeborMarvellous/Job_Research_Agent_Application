@@ -13,9 +13,20 @@ interface ChatWindowProps {
   isStreaming: boolean;
   onSend: (text: string) => void;
   onOpenDocument?: (doc: { title: string; content: string }) => void;
+  resumeFileName?: string;
+  onResumeExtracted: (text: string, fileName: string) => void;
+  onResumeRemove: () => void;
 }
 
-export default function ChatWindow({ messages, isStreaming, onSend, onOpenDocument }: ChatWindowProps) {
+export default function ChatWindow({
+  messages,
+  isStreaming,
+  onSend,
+  onOpenDocument,
+  resumeFileName,
+  onResumeExtracted,
+  onResumeRemove,
+}: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [stalled, setStalled] = useState(false);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,7 +212,13 @@ export default function ChatWindow({ messages, isStreaming, onSend, onOpenDocume
       )}
 
       {/* Input */}
-      <InputBar onSend={onSend} disabled={isStreaming} />
+      <InputBar
+        onSend={onSend}
+        disabled={isStreaming}
+        resumeFileName={resumeFileName}
+        onResumeExtracted={onResumeExtracted}
+        onResumeRemove={onResumeRemove}
+      />
     </div>
   );
 }

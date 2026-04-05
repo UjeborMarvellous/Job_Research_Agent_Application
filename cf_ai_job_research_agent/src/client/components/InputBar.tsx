@@ -1,16 +1,31 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Paperclip, FileText, X } from "lucide-react";
 import { theme } from "../types";
+import { parseResumeFile } from "../utils/parseResumeFile";
 
 interface InputBarProps {
   onSend: (text: string) => void;
   disabled: boolean;
+  resumeFileName?: string;
+  onResumeExtracted: (text: string, fileName: string) => void;
+  onResumeRemove: () => void;
 }
 
-export default function InputBar({ onSend, disabled }: InputBarProps) {
+export default function InputBar({
+  onSend,
+  disabled,
+  resumeFileName,
+  onResumeExtracted,
+  onResumeRemove,
+}: InputBarProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadDisabled = disabled || parsing;
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -36,6 +51,22 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
     }
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setParseError(null);
+    setParsing(true);
+    try {
+      const text = await parseResumeFile(file);
+      onResumeExtracted(text, file.name);
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : "Failed to parse file");
+    } finally {
+      setParsing(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return (
     <>
       <style>{`
@@ -51,8 +82,59 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
           borderTop: `1px solid ${theme.colors.border}`,
           background: theme.colors.surface,
           padding: "12px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
         }}
       >
+        {resumeFileName && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "6px 10px",
+              background: theme.colors.orangeDim,
+              border: `1px solid ${theme.colors.orangeBorder}`,
+              borderRadius: theme.radius.sm,
+            }}
+          >
+            <FileText size={14} color={theme.colors.orange} />
+            <span
+              style={{
+                flex: 1,
+                fontSize: theme.font.size.sm,
+                color: theme.colors.text,
+                fontFamily: theme.font.family,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Resume: {resumeFileName}
+            </span>
+            <button
+              type="button"
+              onClick={onResumeRemove}
+              title="Remove resume from display (server may still hold last upload until replaced)"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "22px",
+                height: "22px",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                borderRadius: theme.radius.sm,
+                flexShrink: 0,
+              }}
+            >
+              <X size={14} color={theme.colors.textMuted} />
+            </button>
+          </div>
+        )}
+
         <div
           style={{
             display: "flex",
@@ -71,6 +153,48 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
             transition: theme.transition,
           }}
         >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,.doc,.txt"
+            onChange={handleFileChange}
+            style={{ display: "none" }}
+          />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!uploadDisabled) fileInputRef.current?.click();
+            }}
+            disabled={uploadDisabled}
+            title="Attach resume"
+            style={{
+              width: "32px",
+              height: "32px",
+              flexShrink: 0,
+              border: "none",
+              borderRadius: theme.radius.md,
+              cursor: uploadDisabled ? "not-allowed" : "pointer",
+              background: "transparent",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: theme.transition,
+            }}
+          >
+            {parsing ? (
+              <Loader2
+                size={17}
+                color={theme.colors.textMuted}
+                style={{ animation: "spin 1s linear infinite" }}
+              />
+            ) : (
+              <Paperclip
+                size={17}
+                color={uploadDisabled ? theme.colors.textMuted : theme.colors.textSecondary}
+              />
+            )}
+          </button>
           <textarea
             ref={textareaRef}
             value={value}
@@ -95,6 +219,7 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
             }}
           />
           <button
+            type="button"
             onClick={handleSend}
             style={{
               width: "32px",
@@ -127,6 +252,19 @@ export default function InputBar({ onSend, disabled }: InputBarProps) {
             )}
           </button>
         </div>
+
+        {parseError && (
+          <p
+            style={{
+              fontSize: theme.font.size.xs,
+              color: theme.colors.danger,
+              fontFamily: theme.font.family,
+              margin: 0,
+            }}
+          >
+            {parseError}
+          </p>
+        )}
       </div>
     </>
   );

@@ -12,6 +12,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import type { AgentState, ResearchEntry } from "../client/types";
+import { beginAgentStep, endAgentStep, runAgentStep } from "./agentSteps";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -209,10 +210,88 @@ function getConversationJobContext(
   return null;
 }
 
+const sidebarTitleSchema = z.object({
+  title: z.string().min(2).max(55),
+});
+
+type ChatOnFinish = Parameters<AIChatAgent<Env, AgentState>["onChatMessage"]>[0];
+
+function clipSidebarTitle(s: string, max = 55): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+function shouldRunLlmSidebarTitle(lastUser: string): boolean {
+  const t = lastUser.trim();
+  if (!t) return false;
+  if (extractResumeUploadTag(t)) return false;
+  if (extractViewEntryTag(t)) return false;
+  return true;
+}
+
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
 export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
-  initialState: AgentState = { researches: [], resumeText: undefined, resumeFileName: undefined };
+  initialState: AgentState = {
+    researches: [],
+    resumeText: undefined,
+    resumeFileName: undefined,
+    sidebarTitle: undefined,
+  };
+
+  private async persistSidebarTitle(title: string): Promise<void> {
+    const clipped = clipSidebarTitle(title);
+    if (!clipped) return;
+    try {
+      await this.setState({ ...this.state, sidebarTitle: clipped });
+    } catch (e) {
+      console.error("persistSidebarTitle:", e);
+    }
+  }
+
+  private async llmSidebarTitleFromUser(
+    model: LanguageModel,
+    lastUser: string,
+    threadHint: string | undefined,
+    abortSignal: AbortSignal | undefined,
+  ): Promise<void> {
+    if (this.state.sidebarTitle?.trim()) return;
+    if (!shouldRunLlmSidebarTitle(lastUser)) return;
+    try {
+      const { object } = await generateObject({
+        model,
+        schema: sidebarTitleSchema,
+        system: `You label a chat thread for a sidebar list. Output one field "title" only.
+Rules:
+- 3 to 8 words, max 55 characters.
+- Summarize the user's topic or intent in neutral professional language.
+- Do NOT copy-paste or quote the user's wording.
+- No quotation marks.`,
+        prompt: threadHint
+          ? `Thread context: ${threadHint}\n\nLatest user message:\n${lastUser.slice(0, 1800)}`
+          : `Latest user message:\n${lastUser.slice(0, 2000)}`,
+        abortSignal,
+      });
+      await this.persistSidebarTitle(object.title);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private withSidebarTitleAfterStream(
+    base: ChatOnFinish,
+    model: LanguageModel,
+    lastUser: string,
+    threadHint: string | undefined,
+    abortSignal: AbortSignal | undefined,
+  ): ChatOnFinish {
+    return (async (evt) => {
+      await base(evt);
+      await this.llmSidebarTitleFromUser(model, lastUser, threadHint, abortSignal);
+    }) as ChatOnFinish;
+  }
 
   onError(connectionOrError: Connection | unknown, error?: unknown): void {
     console.error("WebSocket error:", error ?? connectionOrError);
@@ -234,10 +313,15 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     const resumeTag = extractResumeUploadTag(lastUser);
     if (resumeTag) {
       try {
+        const fileLabel =
+          resumeTag.fileName.length > 36
+            ? `${resumeTag.fileName.slice(0, 33)}…`
+            : resumeTag.fileName;
         await this.setState({
           ...this.state,
           resumeText: resumeTag.resumeText,
           resumeFileName: resumeTag.fileName,
+          sidebarTitle: clipSidebarTitle(`Resume: ${fileLabel}`),
         });
       } catch (err) {
         console.error("Failed to store resume:", err);
@@ -257,51 +341,86 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
       }).toUIMessageStreamResponse({ originalMessages: uiMessages });
     }
 
-    // ── Classify intent (heuristic fast-path for obvious job postings) ─────
-    const { intent, entryId, documentType } = looksLikeJobPosting(lastUser)
-      ? { intent: "analyze-job" as const, entryId: undefined, documentType: undefined }
-      : await classifyIntent(model, lastUser, savedEntries, abortSignal);
+    // ── Orchestrated turn: classify + intent branches in one UI stream ────────
+    const stream = createUIMessageStream({
+      originalMessages: uiMessages,
+      execute: async ({ writer }) => {
+        writer.write({ type: "start" });
 
-    // ── view-saved-entry: replay stored card instantly, no LLM call ──────────
-    if (intent === "view-saved-entry") {
-      const entry = savedEntries.find((e) => e.id === entryId);
+        const jobHeuristic = looksLikeJobPosting(lastUser);
+        let classified!: z.infer<typeof intentSchema>;
+        await runAgentStep(
+          writer,
+          jobHeuristic ? "Detected job posting" : "Understanding your request",
+          async () => {
+            classified = jobHeuristic
+              ? { intent: "analyze-job" as const, entryId: undefined, documentType: undefined }
+              : await classifyIntent(model, lastUser, savedEntries, abortSignal);
+          },
+        );
 
-      if (!entry?.analysis) {
-        return streamText({
-          model,
-          system:
-            "You are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again.",
-          messages: modelMessages,
-          abortSignal,
-          onFinish,
-        }).toUIMessageStreamResponse({ originalMessages: uiMessages });
-      }
+        const { intent, entryId, documentType } = classified;
 
-      const stream = createUIMessageStream({
-        originalMessages: uiMessages,
-        execute: async ({ writer }) => {
-          writer.write({ type: "start" });
-          const toolCallId = crypto.randomUUID();
+        // ── view-saved-entry ────────────────────────────────────────────────
+        if (intent === "view-saved-entry") {
+          const entry = savedEntries.find((e) => e.id === entryId);
+
+          if (!entry?.analysis) {
+            const replyStep = beginAgentStep(writer, "Writing reply");
+            const wrappedFinish = this.withSidebarTitleAfterStream(
+              onFinish,
+              model,
+              lastUser,
+              "User tried to open saved research that was not found",
+              abortSignal,
+            );
+            const st = streamText({
+              model,
+              system:
+                "You are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again.",
+              messages: modelMessages,
+              abortSignal,
+              onFinish: async (evt) => {
+                endAgentStep(writer, replyStep, true);
+                await wrappedFinish(evt);
+              },
+            });
+            writer.merge(
+              st.toUIMessageStream({ sendStart: false, sendFinish: true }),
+            );
+            return;
+          }
+
+          await runAgentStep(writer, "Loading saved research", async () => {
+            await this.persistSidebarTitle(`${entry.jobTitle} at ${entry.company}`);
+          });
+
+          const replayToolId = crypto.randomUUID();
           writer.write({
             type: "tool-input-start",
-            toolCallId,
+            toolCallId: replayToolId,
             toolName: "analyzeJobPosting",
             providerExecuted: true,
           });
           writer.write({
             type: "tool-input-available",
-            toolCallId,
+            toolCallId: replayToolId,
             toolName: "analyzeJobPosting",
-            input: { jobTitle: entry.jobTitle, company: entry.company, jobDescription: "" },
+            input: {
+              jobTitle: entry.jobTitle,
+              company: entry.company,
+              jobDescription: "",
+            },
             providerExecuted: true,
           });
           writer.write({
             type: "tool-output-available",
-            toolCallId,
+            toolCallId: replayToolId,
             output: entry.analysis,
             providerExecuted: true,
           });
 
+          const followStep = beginAgentStep(writer, "Writing reply");
           const followUp = streamText({
             model,
             system: "You are a concise career coach.",
@@ -312,41 +431,56 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
               },
             ],
             abortSignal,
-            onFinish,
+            onFinish: async (evt) => {
+              endAgentStep(writer, followStep, true);
+              await onFinish(evt);
+            },
           });
           writer.merge(
             followUp.toUIMessageStream({ sendStart: false, sendFinish: true }),
           );
-        },
-      });
+          return;
+        }
 
-      return createUIMessageStreamResponse({ stream });
-    }
+        // ── view-history ────────────────────────────────────────────────────
+        if (intent === "view-history") {
+          const researches = savedEntries;
+          const listStep = beginAgentStep(writer, "Listing saved roles");
+          const wrappedFinish = this.withSidebarTitleAfterStream(
+            onFinish,
+            model,
+            lastUser,
+            "User asked about their saved job research list",
+            abortSignal,
+          );
+          const st = streamText({
+            model,
+            system: `You are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise.`,
+            messages: modelMessages,
+            abortSignal,
+            onFinish: async (evt) => {
+              endAgentStep(writer, listStep, true);
+              await wrappedFinish(evt);
+            },
+          });
+          writer.merge(
+            st.toUIMessageStream({ sendStart: false, sendFinish: true }),
+          );
+          return;
+        }
 
-    // ── view-history: plain text list from state ─────────────────────────────
-    if (intent === "view-history") {
-      const researches = savedEntries;
-      return streamText({
-        model,
-        system: `You are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise.`,
-        messages: modelMessages,
-        abortSignal,
-        onFinish,
-      }).toUIMessageStreamResponse({ originalMessages: uiMessages });
-    }
+        // ── chat ─────────────────────────────────────────────────────────────
+        if (intent === "chat") {
+          const ctx = getConversationJobContext(uiMessages, savedEntries);
+          const resumeText = (this.state as AgentState)?.resumeText;
+          const resumeSnippet = resumeText
+            ? `\n\nThe user's resume (extracted text, use to personalise advice):\n${resumeText.slice(0, 3000)}`
+            : "";
 
-    // ── chat: context-aware conversational reply ─────────────────────────────
-    if (intent === "chat") {
-      const ctx = getConversationJobContext(uiMessages, savedEntries);
-      const resumeText = (this.state as AgentState)?.resumeText;
-      const resumeSnippet = resumeText
-        ? `\n\nThe user's resume (extracted text, use to personalise advice):\n${resumeText.slice(0, 3000)}`
-        : "";
+          let system: string;
 
-      let system: string;
-
-      if (ctx?.analysis) {
-        system = `You are an expert career coach helping a job applicant.
+          if (ctx?.analysis) {
+            system = `You are an expert career coach helping a job applicant.
 You have already analyzed the following role for them:
 
 Role: ${ctx.jobTitle} at ${ctx.company}
@@ -371,60 +505,101 @@ ${ctx.analysis.questionsToAsk.join("\n")}
 ${resumeSnippet}
 
 The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked.`;
-      } else if (ctx) {
-        system = `You are an expert career coach helping a job applicant.
+          } else if (ctx) {
+            system = `You are an expert career coach helping a job applicant.
 Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
 Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet}`;
-      } else {
-        system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
-      }
+          } else {
+            system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
+          }
 
-      return streamText({
-        model,
-        system,
-        messages: modelMessages,
-        abortSignal,
-        onFinish,
-      }).toUIMessageStreamResponse({ originalMessages: uiMessages });
-    }
+          const threadHint = ctx?.analysis
+            ? `Follow-up about ${ctx.jobTitle} at ${ctx.company}`
+            : ctx
+              ? `Discussion referencing ${ctx.jobTitle} at ${ctx.company}`
+              : undefined;
 
-    // ── generate-document: cover letter, email, or CV tips ──────────────────
-    if (intent === "generate-document") {
-      const ctx = getConversationJobContext(uiMessages, savedEntries);
-      const resumeText = (this.state as AgentState)?.resumeText;
+          if (ctx?.analysis || ctx || resumeText) {
+            await runAgentStep(writer, "Loading saved context", async () => {
+              await Promise.resolve();
+            });
+          }
 
-      const jobContext = ctx?.analysis
-        ? `Role: ${ctx.jobTitle} at ${ctx.company}\nCompany Overview: ${ctx.analysis.companyOverview}\nRole Expectations: ${ctx.analysis.roleExpectations}\nPositioning Tips: ${ctx.analysis.positioningTips}`
-        : ctx
-          ? `Role: ${ctx.jobTitle} at ${ctx.company}`
-          : "";
+          const writingStep = beginAgentStep(writer, "Writing reply");
+          const wrappedFinish = this.withSidebarTitleAfterStream(
+            onFinish,
+            model,
+            lastUser,
+            threadHint,
+            abortSignal,
+          );
+          const st = streamText({
+            model,
+            system,
+            messages: modelMessages,
+            abortSignal,
+            onFinish: async (evt) => {
+              endAgentStep(writer, writingStep, true);
+              await wrappedFinish(evt);
+            },
+          });
+          writer.merge(
+            st.toUIMessageStream({ sendStart: false, sendFinish: true }),
+          );
+          return;
+        }
 
-      const resumeContext = resumeText
-        ? `\n\nCandidate's Resume:\n${resumeText.slice(0, 4000)}`
-        : "";
+        // ── generate-document ───────────────────────────────────────────────
+        if (intent === "generate-document") {
+          const ctx = getConversationJobContext(uiMessages, savedEntries);
+          const resumeText = (this.state as AgentState)?.resumeText;
 
-      const docType = documentType ?? "cover-letter";
-      const docLabel =
-        docType === "cover-letter"
-          ? "Cover Letter"
-          : docType === "email"
-            ? "Application Email"
-            : "CV Improvement Tips";
+          const jobContext = ctx?.analysis
+            ? `Role: ${ctx.jobTitle} at ${ctx.company}\nCompany Overview: ${ctx.analysis.companyOverview}\nRole Expectations: ${ctx.analysis.roleExpectations}\nPositioning Tips: ${ctx.analysis.positioningTips}`
+            : ctx
+              ? `Role: ${ctx.jobTitle} at ${ctx.company}`
+              : "";
 
-      const docTitle = ctx
-        ? `${docLabel} — ${ctx.jobTitle} at ${ctx.company}`
-        : docLabel;
+          const resumeContext = resumeText
+            ? `\n\nCandidate's Resume:\n${resumeText.slice(0, 4000)}`
+            : "";
 
-      const systemPrompts: Record<string, string> = {
-        "cover-letter": `You are a professional cover letter writer. Write a compelling, personalized cover letter for the candidate applying to this role. Use their resume details and the job analysis to tailor every paragraph. Output the cover letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML.`,
-        email: `You are a professional email drafter. Write a concise, professional application email for the candidate to send when applying to this role. Use their resume and the job analysis to personalize it. Output the email in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble — output ONLY the email HTML.`,
-        "cv-tips": `You are an expert CV/resume consultant. Based on the job requirements and the candidate's current resume, provide specific, actionable tips to improve their CV for this exact role. Format as HTML with headings (<h3>), bullet lists (<ul><li>), and bold text (<strong>) for key points. Do NOT include preamble — output ONLY the tips HTML.`,
-      };
+          const docType = documentType ?? "cover-letter";
+          const docLabel =
+            docType === "cover-letter"
+              ? "Cover Letter"
+              : docType === "email"
+                ? "Application Email"
+                : "CV Improvement Tips";
 
-      const stream = createUIMessageStream({
-        originalMessages: uiMessages,
-        execute: async ({ writer }) => {
-          writer.write({ type: "start" });
+          const docTitle = ctx
+            ? `${docLabel} — ${ctx.jobTitle} at ${ctx.company}`
+            : docLabel;
+
+          const systemPrompts: Record<string, string> = {
+            "cover-letter": `You are a professional cover letter writer. Write a compelling, personalized cover letter for the candidate applying to this role. Use their resume details and the job analysis to tailor every paragraph. Output the cover letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML.`,
+            email: `You are a professional email drafter. Write a concise, professional application email for the candidate to send when applying to this role. Use their resume and the job analysis to personalize it. Output the email in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble — output ONLY the email HTML.`,
+            "cv-tips": `You are an expert CV/resume consultant. Based on the job requirements and the candidate's current resume, provide specific, actionable tips to improve their CV for this exact role. Format as HTML with headings (<h3>), bullet lists (<ul><li>), and bold text (<strong>) for key points. Do NOT include preamble — output ONLY the tips HTML.`,
+          };
+
+          await runAgentStep(writer, "Gathering job and resume context", async () => {
+            await Promise.resolve();
+          });
+
+          const genToolId = crypto.randomUUID();
+          writer.write({
+            type: "tool-input-start",
+            toolCallId: genToolId,
+            toolName: "generateDocument",
+            providerExecuted: true,
+          });
+          writer.write({
+            type: "tool-input-available",
+            toolCallId: genToolId,
+            toolName: "generateDocument",
+            input: { documentType: docType, title: docTitle },
+            providerExecuted: true,
+          });
 
           const result = streamText({
             model,
@@ -439,55 +614,45 @@ Read the full conversation history carefully and answer the user's follow-up que
           });
 
           const chunks: string[] = [];
-
-          const textId = crypto.randomUUID();
-          writer.write({ type: "text-start", id: textId });
-
           for await (const chunk of result.textStream) {
             chunks.push(chunk);
-            writer.write({ type: "text-delta", id: textId, delta: chunk });
           }
-
-          writer.write({ type: "text-end", id: textId });
-
           const fullContent = chunks.join("");
 
-          const toolCallId = crypto.randomUUID();
-          writer.write({
-            type: "tool-input-start",
-            toolCallId,
-            toolName: "generateDocument",
-            providerExecuted: true,
-          });
-          writer.write({
-            type: "tool-input-available",
-            toolCallId,
-            toolName: "generateDocument",
-            input: { documentType: docType, title: docTitle },
-            providerExecuted: true,
-          });
+          await this.persistSidebarTitle(docTitle);
+
           writer.write({
             type: "tool-output-available",
-            toolCallId,
+            toolCallId: genToolId,
             output: { content: fullContent, format: "html" },
             providerExecuted: true,
           });
 
-          writer.write({ type: "finish", finishReason: "stop" });
-          await onFinish({} as Parameters<typeof onFinish>[0]);
-        },
-      });
+          const docReplyStep = beginAgentStep(writer, "Writing reply");
+          const commentary = streamText({
+            model,
+            system: "You are a concise career coach.",
+            messages: [
+              {
+                role: "user",
+                content: `You just generated a ${docLabel} for the user. Write 1-2 short sentences telling them their document is ready and they can click "Open in Editor" to review, edit, and export it. Be encouraging but brief.`,
+              },
+            ],
+            abortSignal,
+            onFinish: async (evt) => {
+              endAgentStep(writer, docReplyStep, true);
+              await onFinish(evt);
+            },
+          });
+          writer.merge(
+            commentary.toUIMessageStream({ sendStart: false, sendFinish: true }),
+          );
+          return;
+        }
 
-      return createUIMessageStreamResponse({ stream });
-    }
-
-    // ── analyze-job: single combined extract+analyze → save → stream card ────
-    const stream = createUIMessageStream({
-      originalMessages: uiMessages,
-      execute: async ({ writer }) => {
-        writer.write({ type: "start" });
-
+        // ── analyze-job (default) ───────────────────────────────────────────
         let result: z.infer<typeof fullAnalysisSchema>;
+        const extractId = beginAgentStep(writer, "Extracting job details");
         try {
           const { object } = await generateObject({
             model,
@@ -497,8 +662,10 @@ Read the full conversation history carefully and answer the user's follow-up que
             abortSignal,
           });
           result = object;
+          endAgentStep(writer, extractId, true);
         } catch (err) {
           console.error("Job analysis failed:", err);
+          endAgentStep(writer, extractId, false);
           const errTextId = crypto.randomUUID();
           writer.write({ type: "text-start", id: errTextId });
           writer.write({
@@ -508,12 +675,18 @@ Read the full conversation history carefully and answer the user's follow-up que
           });
           writer.write({ type: "text-end", id: errTextId });
           writer.write({ type: "finish", finishReason: "stop" });
+          await this.llmSidebarTitleFromUser(
+            model,
+            lastUser,
+            "User message could not be analyzed as a job posting",
+            abortSignal,
+          );
           return;
         }
 
         const { jobTitle, company, ...analysis } = result;
 
-        // Deduplicate — update if same company+title already saved
+        const saveId = beginAgentStep(writer, "Saving to your research");
         try {
           const current = (this.state?.researches ?? []) as ResearchEntry[];
           const summary = `${jobTitle} at ${company}: ${analysis.companyOverview.slice(0, 140)}${analysis.companyOverview.length > 140 ? "…" : ""}`;
@@ -531,7 +704,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 : r,
             );
           } else {
-            const entry: ResearchEntry = {
+            const newEntry: ResearchEntry = {
               id: crypto.randomUUID(),
               company,
               jobTitle,
@@ -539,34 +712,41 @@ Read the full conversation history carefully and answer the user's follow-up que
               timestamp: new Date().toISOString(),
               analysis,
             };
-            updated = [...current, entry];
+            updated = [...current, newEntry];
           }
-          await this.setState({ ...this.state, researches: updated });
-        } catch (err) {
-          console.error("persist research failed:", err);
+          await this.setState({
+            ...this.state,
+            researches: updated,
+            sidebarTitle: clipSidebarTitle(`${jobTitle} at ${company}`),
+          });
+          endAgentStep(writer, saveId, true);
+        } catch (persistErr) {
+          console.error("persist research failed:", persistErr);
+          endAgentStep(writer, saveId, false);
         }
 
-        const toolCallId = crypto.randomUUID();
+        const analysisToolId = crypto.randomUUID();
         writer.write({
           type: "tool-input-start",
-          toolCallId,
+          toolCallId: analysisToolId,
           toolName: "analyzeJobPosting",
           providerExecuted: true,
         });
         writer.write({
           type: "tool-input-available",
-          toolCallId,
+          toolCallId: analysisToolId,
           toolName: "analyzeJobPosting",
           input: { jobTitle, company },
           providerExecuted: true,
         });
         writer.write({
           type: "tool-output-available",
-          toolCallId,
+          toolCallId: analysisToolId,
           output: analysis,
           providerExecuted: true,
         });
 
+        const insightStep = beginAgentStep(writer, "Writing reply");
         const commentary = streamText({
           model,
           system: "You are a concise career coach.",
@@ -577,7 +757,10 @@ Read the full conversation history carefully and answer the user's follow-up que
             },
           ],
           abortSignal,
-          onFinish,
+          onFinish: async (evt) => {
+            endAgentStep(writer, insightStep, true);
+            await onFinish(evt);
+          },
         });
         writer.merge(
           commentary.toUIMessageStream({ sendStart: false, sendFinish: true }),
