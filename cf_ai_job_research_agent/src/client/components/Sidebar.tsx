@@ -1,14 +1,8 @@
 import React, { useState } from "react";
-import { Plus, Trash2, MoreVertical, FileSearch, PanelLeftClose, PanelLeft, ScanSearch } from "lucide-react";
+import { Plus, Trash2, FileSearch, PanelLeftClose, PanelLeft, ScanSearch } from "lucide-react";
 import { theme } from "../types";
 import type { ConversationMeta } from "../types";
 import { Button } from "./ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "./ui/dropdown-menu";
 import {
   Tooltip,
   TooltipTrigger,
@@ -60,7 +54,6 @@ export default function Sidebar({
   onToggleCollapse,
 }: SidebarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const sortedConvos = [...conversations].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
@@ -141,15 +134,15 @@ export default function Sidebar({
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
-          padding: "0 14px",
+          padding: "0 12px 0 14px",
           borderBottom: `1px solid ${theme.colors.border}`,
-          gap: "10px",
+          gap: "8px",
           flexShrink: 0,
         }}
       >
-        <IdentityStamp size={14} containerSize={30} />
+        <IdentityStamp size={14} containerSize={28} />
 
-        <span style={{ fontFamily: theme.font.family, flex: 1 }}>
+        <span style={{ fontFamily: theme.font.family, flex: 1, minWidth: 0 }}>
           <span style={{ fontSize: theme.font.size.sm, fontWeight: theme.font.weight.semibold, color: theme.colors.text }}>
             Research{" "}
           </span>
@@ -161,9 +154,32 @@ export default function Sidebar({
         <TooltipProvider delayDuration={400}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="secondary" size="icon-sm" onClick={onNewConversation}>
-                <Plus size={13} />
-              </Button>
+              <button
+                onClick={onNewConversation}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "28px",
+                  height: "28px",
+                  borderRadius: "8px",
+                  border: `1px solid ${theme.colors.border}`,
+                  background: theme.colors.background,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  transition: "background 120ms ease, border-color 120ms ease",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.text;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = theme.colors.background;
+                  (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.border;
+                }}
+              >
+                <Plus size={14} color={theme.colors.text} />
+              </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">New conversation</TooltipContent>
           </Tooltip>
@@ -171,7 +187,7 @@ export default function Sidebar({
       </div>
 
       {/* Conversation list */}
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
         {sortedConvos.length === 0 ? (
           <div
             style={{
@@ -194,8 +210,7 @@ export default function Sidebar({
           sortedConvos.map((convo) => {
             const isActive = convo.id === activeConversationId;
             const isHovered = hoveredId === convo.id;
-            const menuOpen = openMenuId === convo.id;
-            const showActions = isActive || isHovered || menuOpen;
+            const showDelete = isActive || isHovered;
             return (
               <div
                 key={convo.id}
@@ -206,15 +221,16 @@ export default function Sidebar({
                 tabIndex={0}
                 onKeyDown={(e) => e.key === "Enter" && onSelectConversation(convo.id)}
                 style={{
-                  position: "relative",
                   display: "flex",
-                  flexDirection: "column",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: "8px",
                   width: "calc(100% - 16px)",
-                  padding: "9px 12px",
+                  padding: "9px 10px 9px 12px",
                   cursor: "pointer",
                   background: isActive
                     ? theme.colors.surfaceElevated
-                    : isHovered || menuOpen
+                    : isHovered
                       ? theme.colors.surfaceHover
                       : "transparent",
                   transition: theme.transition,
@@ -222,7 +238,8 @@ export default function Sidebar({
                   margin: "2px 8px",
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                {/* Text block */}
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "2px" }}>
                   <span
                     style={{
                       fontSize: theme.font.size.base,
@@ -232,60 +249,50 @@ export default function Sidebar({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      flex: 1,
-                      minWidth: 0,
                     }}
                   >
                     {convo.title}
                   </span>
-
-                  <DropdownMenu
-                    open={menuOpen}
-                    onOpenChange={(open) => setOpenMenuId(open ? convo.id : null)}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: "22px",
-                          height: "22px",
-                          borderRadius: "6px",
-                          border: "none",
-                          background: menuOpen ? theme.colors.surfaceElevated : "transparent",
-                          cursor: "pointer",
-                          flexShrink: 0,
-                          opacity: showActions ? 1 : 0,
-                          transition: "opacity 120ms ease, background 120ms ease",
-                          pointerEvents: showActions ? "auto" : "none",
-                        }}
-                      >
-                        <MoreVertical size={13} color={theme.colors.textSecondary} />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenuItem
-                        destructive
-                        onSelect={() => onDeleteConversation(convo.id)}
-                      >
-                        <Trash2 size={13} />
-                        Delete conversation
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <span style={{
+                    fontSize: theme.font.size.xs,
+                    color: theme.colors.textMuted,
+                    fontFamily: theme.font.family,
+                  }}>
+                    {formatDate(convo.updatedAt)}
+                  </span>
                 </div>
 
-                <span style={{
-                  fontSize: theme.font.size.xs,
-                  color: theme.colors.textMuted,
-                  fontFamily: theme.font.family,
-                  marginTop: "3px",
-                  paddingRight: "28px",
-                }}>
-                  {formatDate(convo.updatedAt)}
-                </span>
+                {/* Inline delete button */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDeleteConversation(convo.id); }}
+                  title="Delete conversation"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "26px",
+                    height: "26px",
+                    borderRadius: "6px",
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    opacity: showDelete ? 1 : 0,
+                    transition: "opacity 120ms ease, background 120ms ease",
+                    pointerEvents: showDelete ? "auto" : "none",
+                    color: theme.colors.textMuted,
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(220,38,38,0.08)";
+                    (e.currentTarget as HTMLButtonElement).style.color = theme.colors.danger;
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                    (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
               </div>
             );
           })
