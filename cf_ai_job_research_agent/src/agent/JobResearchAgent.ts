@@ -39,6 +39,16 @@ const fullAnalysisSchema = z.object({
   positioningTips: z.string(),
 });
 
+/** Explicit caps — Workers AI / SDK defaults can stop generations early (cut-off replies). */
+const OUT = {
+  classify: 256,
+  sidebarTitle: 128,
+  streamShort: 1536,
+  streamReply: 4096,
+  documentHtml: 8192,
+  jobAnalysisJson: 8192,
+} as const;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getLastUserText(messages: UIMessage[]): string {
@@ -133,6 +143,7 @@ async function classifyIntent(
   try {
     const { object } = await generateObject({
       model,
+      maxOutputTokens: OUT.classify,
       schema: intentSchema,
       system: `You are an intent classifier for a job research assistant.
 
@@ -262,6 +273,7 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     try {
       const { object } = await generateObject({
         model,
+        maxOutputTokens: OUT.sidebarTitle,
         schema: sidebarTitleSchema,
         system: `You label a chat thread for a sidebar list. Output one field "title" only.
 Rules:
@@ -329,6 +341,7 @@ Rules:
 
       return streamText({
         model,
+        maxOutputTokens: OUT.streamShort,
         system: "You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences).",
         messages: [
           {
@@ -376,6 +389,7 @@ Rules:
             );
             const st = streamText({
               model,
+              maxOutputTokens: OUT.streamShort,
               system:
                 "You are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again.",
               messages: modelMessages,
@@ -423,6 +437,7 @@ Rules:
           const followStep = beginAgentStep(writer, "Writing reply");
           const followUp = streamText({
             model,
+            maxOutputTokens: OUT.streamShort,
             system: "You are a concise career coach.",
             messages: [
               {
@@ -455,6 +470,7 @@ Rules:
           );
           const st = streamText({
             model,
+            maxOutputTokens: OUT.streamReply,
             system: `You are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise.`,
             messages: modelMessages,
             abortSignal,
@@ -535,6 +551,7 @@ Read the full conversation history carefully and answer the user's follow-up que
           );
           const st = streamText({
             model,
+            maxOutputTokens: OUT.streamReply,
             system,
             messages: modelMessages,
             abortSignal,
@@ -603,6 +620,7 @@ Read the full conversation history carefully and answer the user's follow-up que
 
           const result = streamText({
             model,
+            maxOutputTokens: OUT.documentHtml,
             system: `${systemPrompts[docType] ?? systemPrompts["cover-letter"]}\n\nJob Context:\n${jobContext}${resumeContext}`,
             messages: [
               {
@@ -631,6 +649,7 @@ Read the full conversation history carefully and answer the user's follow-up que
           const docReplyStep = beginAgentStep(writer, "Writing reply");
           const commentary = streamText({
             model,
+            maxOutputTokens: OUT.streamShort,
             system: "You are a concise career coach.",
             messages: [
               {
@@ -656,8 +675,16 @@ Read the full conversation history carefully and answer the user's follow-up que
         try {
           const { object } = await generateObject({
             model,
+            maxOutputTokens: OUT.jobAnalysisJson,
             schema: fullAnalysisSchema,
-            system: `You are an expert career advisor. From the user's message, extract the job title and company name, then produce a detailed, specific analysis grounded entirely in the content given. Use "Unknown company" only if the company truly cannot be determined. No generic advice. Every field must contain multiple sentences. questionsToAsk must be specific to this exact role and company — minimum 5 questions.`,
+            system: `You are an expert career advisor. From the user's message, extract the job title and company name, then produce a detailed, specific analysis grounded entirely in the posting text. Use "Unknown company" only if the company truly cannot be determined.
+
+Rules:
+- Do not invent requirements, benefits, or tech stack not implied by the posting.
+- Each string field: 2–5 tight paragraphs or structured sentences; avoid filler.
+- questionsToAsk: at least 5, each specific to this role and company.
+- Complete every list you start (no trailing setup line without the items).
+- If information is missing, say what is missing instead of guessing.`,
             prompt: lastUser,
             abortSignal,
           });
@@ -749,6 +776,7 @@ Read the full conversation history carefully and answer the user's follow-up que
         const insightStep = beginAgentStep(writer, "Writing reply");
         const commentary = streamText({
           model,
+          maxOutputTokens: OUT.streamShort,
           system: "You are a concise career coach.",
           messages: [
             {

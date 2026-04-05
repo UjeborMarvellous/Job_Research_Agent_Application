@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Flex, Box } from "@chakra-ui/react";
 import useJobAgent from "./hooks/useJobAgent";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
@@ -212,12 +213,14 @@ export default function App() {
   }, []);
 
   return (
-    <div
+    <Flex
+      height="100vh"
+      overflow="hidden"
       style={{
-        display: "flex",
-        height: "100vh",
-        overflow: "hidden",
-        background: theme.colors.background,
+        background: "var(--color-viewport)",
+        padding: "14px",
+        gap: "12px",
+        alignItems: "stretch",
       }}
     >
       <Sidebar
@@ -229,17 +232,29 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((p) => !p)}
       />
-      <ChatSession
-        key={activeSessionId}
-        sessionId={activeSessionId}
-        onTitleUpdate={handleTitleUpdate}
-        onResumeStateChange={handleResumeStateChange}
-        onOpenDocument={handleOpenDocument}
-        sendRef={sendRef}
-        resumeFileName={resumeFileName}
-        onResumeExtracted={handleResumeExtracted}
-        onResumeRemove={handleResumeRemove}
-      />
+      <Box
+        flex="1"
+        overflow="hidden"
+        display="flex"
+        flexDirection="column"
+        style={{
+          borderRadius: "16px",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.08)",
+          background: theme.colors.background,
+        }}
+      >
+        <ChatSession
+          key={activeSessionId}
+          sessionId={activeSessionId}
+          onTitleUpdate={handleTitleUpdate}
+          onResumeStateChange={handleResumeStateChange}
+          onOpenDocument={handleOpenDocument}
+          sendRef={sendRef}
+          resumeFileName={resumeFileName}
+          onResumeExtracted={handleResumeExtracted}
+          onResumeRemove={handleResumeRemove}
+        />
+      </Box>
       {editorOpen && editorDocument && (
         <DocumentEditor
           document={editorDocument}
@@ -249,6 +264,6 @@ export default function App() {
           }
         />
       )}
-    </div>
+    </Flex>
   );
 }
