@@ -7,12 +7,19 @@ import {
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
+  getToolName,
+  isToolUIPart,
   type LanguageModel,
   type UIMessage,
 } from "ai";
 import { z } from "zod";
 import type { AgentState, ResearchEntry } from "../client/types";
-import { beginAgentStep, endAgentStep, runAgentStep } from "./agentSteps";
+import {
+  AGENT_STEP_TOOL_NAME,
+  beginAgentStep,
+  endAgentStep,
+  runAgentStep,
+} from "./agentSteps";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -221,6 +228,30 @@ function getConversationJobContext(
   return null;
 }
 
+/**
+ * Provider-executed UI tools (progress rows, research cards, document tiles) are
+ * not valid multi-turn context for Workers AI — they stall follow-up streams.
+ * Job context for replies still comes from getConversationJobContext + state.
+ */
+const STRIP_FROM_LLM_CONTEXT = new Set<string>([
+  AGENT_STEP_TOOL_NAME,
+  "analyzeJobPosting",
+  "generateDocument",
+]);
+
+function stripUiToolPartsForLlm(messages: UIMessage[]): UIMessage[] {
+  const out: UIMessage[] = [];
+  for (const msg of messages) {
+    const parts = (msg.parts ?? []).filter((p) => {
+      if (!isToolUIPart(p)) return true;
+      return !STRIP_FROM_LLM_CONTEXT.has(getToolName(p));
+    });
+    if (msg.role === "assistant" && parts.length === 0) continue;
+    out.push({ ...msg, parts });
+  }
+  return out;
+}
+
 const sidebarTitleSchema = z.object({
   title: z.string().min(2).max(55),
 });
@@ -318,7 +349,9 @@ Rules:
     const abortSignal = options?.abortSignal;
     const uiMessages = this.messages as UIMessage[];
     const lastUser = getLastUserText(uiMessages);
-    const modelMessages = await convertToModelMessages(uiMessages);
+    const modelMessages = await convertToModelMessages(
+      stripUiToolPartsForLlm(uiMessages),
+    );
     const savedEntries = (this.state?.researches ?? []) as ResearchEntry[];
 
     // ── Resume upload: store and confirm without LLM classification ────────
