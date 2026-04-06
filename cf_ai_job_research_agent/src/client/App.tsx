@@ -72,6 +72,12 @@ function ChatSession({
     [sendMessage],
   );
 
+  const handleRetry = useCallback(() => {
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const text = (lastUserMsg?.parts ?? []).find((p: { type?: string; text?: string }) => p.type === "text")?.text ?? "";
+    if (text) sendMessage({ text });
+  }, [messages, sendMessage]);
+
   useEffect(() => {
     sendRef.current = (text: string) => sendMessage({ text });
     return () => { sendRef.current = null; };
@@ -82,6 +88,7 @@ function ChatSession({
       messages={messages}
       isStreaming={isStreaming}
       onSend={handleSend}
+      onRetry={handleRetry}
       onOpenDocument={onOpenDocument}
       resumeFileName={resumeFileName}
       onResumeExtracted={onResumeExtracted}

@@ -2,7 +2,11 @@ import React from "react";
 import { ShimmerText } from "./aceternity/ShimmerText";
 import { theme } from "../types";
 
-export default function TypingIndicator() {
+interface TypingIndicatorProps {
+  message?: string;
+}
+
+export default function TypingIndicator({ message = "Thinking…" }: TypingIndicatorProps) {
   return (
     <div
       style={{
@@ -36,7 +40,7 @@ export default function TypingIndicator() {
           fontFamily: theme.font.family,
         }}
       >
-        Analyzing role — this may take up to 20 seconds…
+        {message}
       </ShimmerText>
 
       <style>{`

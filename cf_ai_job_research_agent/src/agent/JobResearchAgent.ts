@@ -391,6 +391,7 @@ Rules:
     const stream = createUIMessageStream({
       originalMessages: uiMessages,
       execute: async ({ writer }) => {
+        try {
         writer.write({ type: "start" });
 
         const jobHeuristic = looksLikeJobPosting(lastUser);
@@ -826,6 +827,18 @@ Rules:
         writer.merge(
           commentary.toUIMessageStream({ sendStart: false, sendFinish: true }),
         );
+        } catch (err) {
+          console.error("[JobResearchAgent] execute error:", err);
+          const errId = crypto.randomUUID();
+          writer.write({ type: "text-start", id: errId });
+          writer.write({
+            type: "text-delta",
+            id: errId,
+            delta: "Something went wrong on my end. Please try sending your message again.",
+          });
+          writer.write({ type: "text-end", id: errId });
+          writer.write({ type: "finish", finishReason: "error" });
+        }
       },
     });
 
