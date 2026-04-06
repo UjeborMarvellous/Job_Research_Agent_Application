@@ -51,6 +51,7 @@ interface ChatWindowProps {
   messages: UIMessage[];
   isStreaming: boolean;
   onSend: (text: string) => void;
+  onRetry?: () => void;
   onOpenDocument?: (doc: { title: string; content: string }) => void;
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
@@ -61,6 +62,7 @@ export default function ChatWindow({
   messages,
   isStreaming,
   onSend,
+  onRetry,
   onOpenDocument,
   resumeFileName,
   onResumeExtracted,
@@ -203,7 +205,15 @@ export default function ChatWindow({
               {messages.map((msg) => (
                 <MessageBubble key={msg.id} message={msg} onOpenDocument={onOpenDocument} />
               ))}
-              {isStreaming && <TypingIndicator />}
+              {isStreaming && (() => {
+                const last = messages[messages.length - 1];
+                const lastHasParts = last?.role === "assistant" && (last.parts?.length ?? 0) > 0;
+                if (lastHasParts) return null;
+                const lastUser = [...messages].reverse().find(m => m.role === "user");
+                const lastUserText = (lastUser?.parts ?? []).find((p: {type?: string; text?: string}) => p.type === "text")?.text ?? "";
+                const hint = lastUserText.length > 300 ? "Analyzing role — this may take up to 20 seconds…" : "Thinking…";
+                return <TypingIndicator message={hint} />;
+              })()}
             </>
           )}
           <div ref={messagesEndRef} />
@@ -229,11 +239,29 @@ export default function ChatWindow({
               fontSize: theme.font.size.sm,
               color: theme.colors.danger,
               fontFamily: theme.font.family,
+              flex: 1,
             }}
           >
-            Still working — large job analyses can take up to a minute. You can
-            keep waiting; avoid sending again unless nothing changes for several minutes.
+            Still working — large job analyses can take up to a minute.
           </span>
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              style={{
+                fontSize: theme.font.size.sm,
+                fontFamily: theme.font.family,
+                color: theme.colors.danger,
+                background: "transparent",
+                border: `1px solid ${theme.colors.dangerBorder}`,
+                borderRadius: "6px",
+                padding: "2px 10px",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 
