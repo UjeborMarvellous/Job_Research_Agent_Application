@@ -105,21 +105,31 @@ body {
 ::selection { background: rgba(0, 0, 0, 0.08); }
 
 /* ─── Animations ───────────────────────────────────────────────────────────── */
-@keyframes fadeSlideUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @keyframes shimmer {
+    0%   { background-position: -400% center; }
+    100% { background-position: 400% center; }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; transform: translateY(0); }
+    50%       { opacity: 1; transform: translateY(-2px); }
+  }
 }
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-@keyframes shimmer {
-  0%   { background-position: -400% center; }
-  100% { background-position: 400% center; }
-}
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; transform: translateY(0); }
-  50%       { opacity: 1; transform: translateY(-2px); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ─── Shimmer text ────────────────────────────────────────────────────────── */

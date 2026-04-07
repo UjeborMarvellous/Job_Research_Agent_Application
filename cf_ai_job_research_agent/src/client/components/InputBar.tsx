@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from "react";
 import { ArrowUp, Loader2, Paperclip, FileText, X } from "lucide-react";
 import { theme } from "../types";
 import { parseResumeFile } from "../utils/parseResumeFile";
-import { Button } from "./ui/button";
 
 interface InputBarProps {
   onSend: (text: string) => void;
@@ -116,6 +115,7 @@ export default function InputBar({
               type="button"
               onClick={onResumeRemove}
               title="Remove resume"
+              aria-label="Remove resume"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -177,6 +177,7 @@ export default function InputBar({
           onClick={() => !uploadDisabled && fileInputRef.current?.click()}
           disabled={uploadDisabled}
           title="Attach resume"
+          aria-label="Attach resume"
           style={{
             display: "flex",
             alignItems: "center",
@@ -242,6 +243,7 @@ export default function InputBar({
           onClick={handleSend}
           disabled={!canSend}
           title="Send"
+          aria-label="Send message"
           style={{
             display: "flex",
             alignItems: "center",
