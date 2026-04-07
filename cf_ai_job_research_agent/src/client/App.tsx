@@ -20,7 +20,7 @@ function loadConversations(): ConversationMeta[] {
 }
 
 function saveConversations(convos: ConversationMeta[]) {
-  localStorage.setItem(CONVOS_KEY, JSON.stringify(convos));
+  localStorage.setItem(CONVOS_KEY, JSON.stringify(convos.slice(0, 50)));
 }
 
 function loadActiveSession(convos: ConversationMeta[]): string {

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Plus, Trash2, FileSearch, PanelLeftClose, PanelLeft, ScanSearch } from "lucide-react";
 import { theme } from "../types";
 import type { ConversationMeta } from "../types";
@@ -156,6 +156,7 @@ export default function Sidebar({
             <TooltipTrigger asChild>
               <button
                 onClick={onNewConversation}
+                aria-label="New conversation"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -266,6 +267,7 @@ export default function Sidebar({
                 <button
                   onClick={(e) => { e.stopPropagation(); onDeleteConversation(convo.id); }}
                   title="Delete conversation"
+                  aria-label={`Delete conversation: ${convo.title}`}
                   style={{
                     display: "flex",
                     alignItems: "center",

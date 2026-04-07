@@ -111,12 +111,12 @@ const JOB_KEYWORDS = [
  * intent classifier saves a full ~5 s round-trip for the most common path.
  */
 function looksLikeJobPosting(text: string): boolean {
-  if (text.length < 300) return false;
+  if (text.length < 400) return false;
   const lower = text.toLowerCase();
   let hits = 0;
   for (const kw of JOB_KEYWORDS) {
     if (lower.includes(kw)) hits++;
-    if (hits >= 2) return true;
+    if (hits >= 3) return true;
   }
   return false;
 }
@@ -173,7 +173,8 @@ Rules:
       abortSignal,
     });
     return object;
-  } catch {
+  } catch (err) {
+    console.error("[classifyIntent] failed, defaulting to chat:", err);
     return { intent: "chat" };
   }
 }
@@ -357,6 +358,7 @@ Rules:
     // ── Resume upload: store and confirm without LLM classification ────────
     const resumeTag = extractResumeUploadTag(lastUser);
     if (resumeTag) {
+      const hadResume = !!(this.state as AgentState)?.resumeText;
       try {
         const fileLabel =
           resumeTag.fileName.length > 36
@@ -375,7 +377,9 @@ Rules:
       return streamText({
         model,
         maxOutputTokens: OUT.streamShort,
-        system: "You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences).",
+        system: hadResume
+          ? "You are a job application research assistant. The user just replaced their previously uploaded resume with a new one. Confirm you have updated to the new resume and that it will now be used for cover letters, email drafts, and CV tips. Be concise (2–3 sentences)."
+          : "You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences).",
         messages: [
           {
             role: "user",
@@ -773,7 +777,7 @@ Rules:
               timestamp: new Date().toISOString(),
               analysis,
             };
-            updated = [...current, newEntry];
+            updated = [...current, newEntry].slice(-100);
           }
           await this.setState({
             ...this.state,

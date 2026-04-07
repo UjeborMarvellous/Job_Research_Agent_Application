@@ -32,17 +32,13 @@ export async function exportAsPdf(title: string, htmlContent: string) {
     const pageHeight = pdf.internal.pageSize.getHeight();
     const imgWidth = pageWidth - 20;
     const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const usableHeight = pageHeight - 20;
 
-    let yOffset = 10;
-    let remainingHeight = imgHeight;
-
-    while (remainingHeight > 0) {
-      pdf.addImage(imgData, "PNG", 10, yOffset, imgWidth, imgHeight);
-      remainingHeight -= pageHeight - 20;
-      if (remainingHeight > 0) {
-        pdf.addPage();
-        yOffset = -(imgHeight - remainingHeight) + 10;
-      }
+    const pageCount = Math.ceil(imgHeight / usableHeight);
+    for (let i = 0; i < pageCount; i++) {
+      if (i > 0) pdf.addPage();
+      const yPos = -(i * usableHeight) + 10;
+      pdf.addImage(imgData, "PNG", 10, yPos, imgWidth, imgHeight);
     }
 
     pdf.save(`${sanitiseFilename(title)}.pdf`);
@@ -52,29 +48,74 @@ export async function exportAsPdf(title: string, htmlContent: string) {
 }
 
 export async function exportAsDocx(title: string, htmlContent: string) {
-  const { Document, Packer, Paragraph, TextRun } = await import("docx");
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
 
-  const lines = htmlContent
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/h[1-3]>/gi, "\n\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const parsed = new DOMParser().parseFromString(htmlContent, "text/html");
+  const body = parsed.body;
 
-  const paragraphs = lines.map(
-    (line) =>
-      new Paragraph({
-        children: [new TextRun({ text: line, size: 24, font: "Calibri" })],
-      }),
-  );
+  type TR = InstanceType<typeof TextRun>;
+  type P = InstanceType<typeof Paragraph>;
 
-  const doc = new Document({
-    sections: [{ children: paragraphs }],
-  });
+  function getInlineRuns(node: Node): TR[] {
+    const runs: TR[] = [];
+    function walk(n: Node, bold = false, italics = false) {
+      if (n.nodeType === Node.TEXT_NODE) {
+        const text = n.textContent ?? "";
+        if (text) runs.push(new TextRun({ text, bold, italics, size: 24, font: "Calibri" }));
+      } else if (n.nodeType === Node.ELEMENT_NODE) {
+        const el = n as Element;
+        const tag = el.tagName.toLowerCase();
+        const b = bold || tag === "strong" || tag === "b";
+        const i = italics || tag === "em" || tag === "i";
+        for (const child of Array.from(el.childNodes)) walk(child, b, i);
+      }
+    }
+    walk(node);
+    return runs;
+  }
 
+  const paragraphs: P[] = [];
+
+  function processNode(node: Node) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+
+    if (tag === "h1") {
+      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: getInlineRuns(el) }));
+    } else if (tag === "h2") {
+      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_2, children: getInlineRuns(el) }));
+    } else if (tag === "h3") {
+      paragraphs.push(new Paragraph({ heading: HeadingLevel.HEADING_3, children: getInlineRuns(el) }));
+    } else if (tag === "p") {
+      const runs = getInlineRuns(el);
+      if (runs.length > 0) paragraphs.push(new Paragraph({ children: runs }));
+    } else if (tag === "ul") {
+      for (const li of Array.from(el.querySelectorAll(":scope > li"))) {
+        paragraphs.push(new Paragraph({ bullet: { level: 0 }, children: getInlineRuns(li) }));
+      }
+    } else if (tag === "ol") {
+      let idx = 1;
+      for (const li of Array.from(el.querySelectorAll(":scope > li"))) {
+        const runs = getInlineRuns(li);
+        paragraphs.push(new Paragraph({
+          children: [new TextRun({ text: `${idx}. `, bold: false, size: 24, font: "Calibri" }), ...runs],
+        }));
+        idx++;
+      }
+    } else {
+      const runs = getInlineRuns(el);
+      if (runs.length > 0) paragraphs.push(new Paragraph({ children: runs }));
+    }
+  }
+
+  for (const child of Array.from(body.childNodes)) processNode(child);
+
+  if (paragraphs.length === 0) {
+    paragraphs.push(new Paragraph({ children: [new TextRun({ text: "", font: "Calibri", size: 24 })] }));
+  }
+
+  const doc = new Document({ sections: [{ children: paragraphs }] });
   const blob = await Packer.toBlob(doc);
   saveAs(blob, `${sanitiseFilename(title)}.docx`);
 }

@@ -42,7 +42,7 @@ export async function runAgentStep(
       output: { ok: false },
       providerExecuted: true,
     });
-    throw e;
+    throw new Error(`Agent step "${label}" failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
   }
 }
 
