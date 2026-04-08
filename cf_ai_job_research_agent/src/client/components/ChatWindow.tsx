@@ -56,6 +56,7 @@ interface ChatWindowProps {
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
+  pendingResumeFileName?: string;
 }
 
 export default function ChatWindow({
@@ -67,6 +68,7 @@ export default function ChatWindow({
   resumeFileName,
   onResumeExtracted,
   onResumeRemove,
+  pendingResumeFileName,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [stalled, setStalled] = useState(false);
@@ -271,6 +273,7 @@ export default function ChatWindow({
         resumeFileName={resumeFileName}
         onResumeExtracted={onResumeExtracted}
         onResumeRemove={onResumeRemove}
+        pendingResumeFileName={pendingResumeFileName}
       />
     </div>
   );

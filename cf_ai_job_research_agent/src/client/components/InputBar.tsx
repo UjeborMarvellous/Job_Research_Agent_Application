@@ -9,6 +9,7 @@ interface InputBarProps {
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
+  pendingResumeFileName?: string;
 }
 
 export default function InputBar({
@@ -17,6 +18,7 @@ export default function InputBar({
   resumeFileName,
   onResumeExtracted,
   onResumeRemove,
+  pendingResumeFileName,
 }: InputBarProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
@@ -26,7 +28,7 @@ export default function InputBar({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const uploadDisabled = disabled || parsing;
-  const canSend = value.trim().length > 0 && !disabled;
+  const canSend = !disabled && (value.trim().length > 0 || !!pendingResumeFileName);
 
   useEffect(() => {
     if (textareaRef.current) {

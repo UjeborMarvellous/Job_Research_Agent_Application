@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -22,16 +22,24 @@ import {
   FileDown,
   FileType,
   Loader2,
+  CheckCircle2,
 } from "lucide-react";
 import { theme } from "../types";
 import { exportAsPdf, exportAsDocx, exportAsTxt } from "../utils/exportDocument";
 import { Button } from "./ui/button";
-import { Separator } from "./ui/separator";
+
+interface OpenDocument {
+  id: string;
+  title: string;
+  content: string;
+}
 
 interface DocumentEditorProps {
-  document: { title: string; content: string };
-  onClose: () => void;
-  onUpdateContent: (content: string) => void;
+  openDocuments: OpenDocument[];
+  activeDocumentId: string;
+  onCloseDocument: (id: string) => void;
+  onSetActiveDocument: (id: string) => void;
+  onUpdateContent: (id: string, content: string) => void;
 }
 
 function ToolbarBtn({
@@ -58,10 +66,16 @@ function ToolbarBtn({
 }
 
 export default function DocumentEditor({
-  document: doc,
-  onClose,
+  openDocuments,
+  activeDocumentId,
+  onCloseDocument,
+  onSetActiveDocument,
   onUpdateContent,
 }: DocumentEditorProps) {
+  const activeDoc = openDocuments.find((d) => d.id === activeDocumentId) ?? openDocuments[0];
+
+  const [updatedFlash, setUpdatedFlash] = useState(false);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -69,9 +83,9 @@ export default function DocumentEditor({
       Placeholder.configure({ placeholder: "Start editing your document…" }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
     ],
-    content: doc.content,
+    content: activeDoc?.content ?? "",
     onUpdate: ({ editor: e }) => {
-      onUpdateContent(e.getHTML());
+      if (activeDoc) onUpdateContent(activeDoc.id, e.getHTML());
     },
     editorProps: {
       attributes: {
@@ -88,19 +102,38 @@ export default function DocumentEditor({
     },
   });
 
+  // Fix 3 + 4 — reinitialize editor when active document switches or content is pushed from agent
+  const prevDocIdRef = React.useRef<string | null>(null);
+  const prevContentRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!editor || !activeDoc) return;
+    const docSwitched = prevDocIdRef.current !== activeDoc.id;
+    const contentPushed = !docSwitched && prevContentRef.current !== activeDoc.content;
+    if (docSwitched || contentPushed) {
+      editor.commands.setContent(activeDoc.content ?? "");
+      prevDocIdRef.current = activeDoc.id;
+      prevContentRef.current = activeDoc.content;
+      if (contentPushed) {
+        setUpdatedFlash(true);
+        const t = setTimeout(() => setUpdatedFlash(false), 1500);
+        return () => clearTimeout(t);
+      }
+    }
+  }, [activeDocumentId, activeDoc?.content]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [exporting, setExporting] = useState<string | null>(null);
 
   const handleExport = useCallback(
     async (format: "pdf" | "docx" | "txt") => {
-      if (!editor) return;
+      if (!editor || !activeDoc) return;
       setExporting(format);
       try {
         if (format === "pdf") {
-          await exportAsPdf(doc.title, editor.getHTML());
+          await exportAsPdf(activeDoc.title, editor.getHTML());
         } else if (format === "docx") {
-          await exportAsDocx(doc.title, editor.getHTML());
+          await exportAsDocx(activeDoc.title, editor.getHTML());
         } else {
-          exportAsTxt(doc.title, editor.getText());
+          exportAsTxt(activeDoc.title, editor.getText());
         }
       } catch (err) {
         console.error(`Export ${format} failed:`, err);
@@ -108,10 +141,10 @@ export default function DocumentEditor({
         setExporting(null);
       }
     },
-    [editor, doc.title],
+    [editor, activeDoc],
   );
 
-  if (!editor) return null;
+  if (!editor || !activeDoc) return null;
 
   return (
     <div
@@ -127,6 +160,87 @@ export default function DocumentEditor({
         boxShadow: "-4px 0 24px rgba(0,0,0,0.08)",
       }}
     >
+      {/* Tab bar — Fix 4 */}
+      {openDocuments.length > 1 && (
+        <div
+          style={{
+            display: "flex",
+            overflowX: "auto",
+            borderBottom: `1px solid ${theme.colors.border}`,
+            background: theme.colors.surface,
+            flexShrink: 0,
+          }}
+        >
+          {openDocuments.map((doc) => {
+            const isActive = doc.id === activeDocumentId;
+            return (
+              <div
+                key={doc.id}
+                onClick={() => onSetActiveDocument(doc.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "0 10px 0 12px",
+                  height: "36px",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  maxWidth: "180px",
+                  borderRight: `1px solid ${theme.colors.border}`,
+                  background: isActive ? theme.colors.background : "transparent",
+                  borderBottom: isActive ? `2px solid ${theme.colors.text}` : "none",
+                  transition: "background 120ms ease",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: theme.font.size.sm,
+                    fontWeight: isActive ? theme.font.weight.semibold : theme.font.weight.regular,
+                    color: isActive ? theme.colors.text : theme.colors.textSecondary,
+                    fontFamily: theme.font.family,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {doc.title}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onCloseDocument(doc.id); }}
+                  aria-label={`Close ${doc.title}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "4px",
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    color: theme.colors.textMuted,
+                    transition: "background 100ms ease, color 100ms ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
+                    (e.currentTarget as HTMLButtonElement).style.color = theme.colors.text;
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                    (e.currentTarget as HTMLButtonElement).style.color = theme.colors.textMuted;
+                  }}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Header */}
       <div
         style={{
@@ -152,9 +266,32 @@ export default function DocumentEditor({
             whiteSpace: "nowrap",
           }}
         >
-          {doc.title}
+          {activeDoc.title}
         </span>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} title="Close editor">
+        {/* Fix 3 — "Document updated" flash */}
+        {updatedFlash && (
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              fontSize: theme.font.size.sm,
+              color: theme.colors.success,
+              fontFamily: theme.font.family,
+              animation: "fadeSlideUp 200ms ease",
+            }}
+          >
+            <CheckCircle2 size={12} />
+            Updated
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => onCloseDocument(activeDoc.id)}
+          title="Close editor"
+          aria-label="Close editor"
+        >
           <X size={15} />
         </Button>
       </div>
