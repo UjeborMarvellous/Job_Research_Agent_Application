@@ -51,6 +51,7 @@ interface ChatSessionProps {
   onResumeRemove: () => void;
   editorOpen: boolean;
   activeDocumentTitle: string | null;
+  activeDocumentContent: string | null;
   onUpdateActiveDocument: (content: string) => void;
 }
 
@@ -66,6 +67,7 @@ function ChatSession({
   onResumeRemove,
   editorOpen,
   activeDocumentTitle,
+  activeDocumentContent,
   onUpdateActiveDocument,
 }: ChatSessionProps) {
   const { messages, sendMessage, agentState, isStreaming } =
@@ -81,16 +83,25 @@ function ChatSession({
   }, [agentState.resumeFileName, onResumeStateChange]);
 
   // Fix 2 — attach pending resume to the next user send
+  // Step 8 — attach live editor content tag when editor is open (for update-document intent)
   const handleSend = useCallback(
     (text: string) => {
+      let messageText = text;
+
+      // Prepend editor-content tag so backend can use live TipTap HTML for updates
+      if (editorOpen && activeDocumentContent) {
+        const encoded = btoa(unescape(encodeURIComponent(activeDocumentContent)));
+        messageText = `[editor-content:${encoded}] ${messageText}`;
+      }
+
       if (pendingResume) {
-        sendMessage({ text: `[resume-upload:${pendingResume.fileName}] ${text}` });
+        sendMessage({ text: `[resume-upload:${pendingResume.fileName}] ${messageText}` });
         onClearPendingResume();
       } else {
-        sendMessage({ text });
+        sendMessage({ text: messageText });
       }
     },
-    [sendMessage, pendingResume, onClearPendingResume],
+    [sendMessage, pendingResume, onClearPendingResume, editorOpen, activeDocumentContent],
   );
 
   const handleRetry = useCallback(() => {
@@ -163,7 +174,7 @@ export default function App() {
   );
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [resumeFileName, setResumeFileName] = useState<string | undefined>();
+  const [uploadedResumeFileName, setUploadedResumeFileName] = useState<string | undefined>();
 
   // Fix 2 — pending resume staged here, sent on next user submit
   const [pendingResume, setPendingResume] = useState<{ text: string; fileName: string } | null>(null);
@@ -247,12 +258,12 @@ export default function App() {
   // Fix 1 — no truncation; Fix 2 — stage only, do not send on parse
   const handleResumeExtracted = useCallback((text: string, fileName: string) => {
     setPendingResume({ text, fileName });
-    setResumeFileName(fileName);
+    // uploadedResumeFileName is set only when the DO confirms it has the resume
   }, []);
 
   const handleResumeRemove = useCallback(() => {
     setPendingResume(null);
-    setResumeFileName(undefined);
+    setUploadedResumeFileName(undefined);
   }, []);
 
   const handleClearPendingResume = useCallback(() => {
@@ -260,7 +271,7 @@ export default function App() {
   }, []);
 
   const handleResumeStateChange = useCallback((fileName: string | undefined) => {
-    setResumeFileName(fileName);
+    setUploadedResumeFileName(fileName);
   }, []);
 
   // Fix 4 — open / upsert document by title
@@ -352,11 +363,12 @@ export default function App() {
           onOpenDocument={handleOpenDocument}
           pendingResume={pendingResume}
           onClearPendingResume={handleClearPendingResume}
-          resumeFileName={resumeFileName}
+          resumeFileName={uploadedResumeFileName}
           onResumeExtracted={handleResumeExtracted}
           onResumeRemove={handleResumeRemove}
           editorOpen={editorOpen}
           activeDocumentTitle={activeDocumentTitle}
+          activeDocumentContent={activeDocument?.content ?? null}
           onUpdateActiveDocument={handleUpdateActiveDocument}
         />
       </Box>

@@ -39,7 +39,7 @@ export default function InputBar({
 
   const handleSend = () => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    if ((!trimmed && !pendingResumeFileName) || disabled) return;
     onSend(trimmed);
     setValue("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -81,7 +81,7 @@ export default function InputBar({
       }}
     >
       {/* Resume chip */}
-      {resumeFileName && (
+      {(resumeFileName || pendingResumeFileName) && (
         <div style={{ display: "flex", alignItems: "center", paddingLeft: "2px" }}>
           <div
             style={{
@@ -111,7 +111,7 @@ export default function InputBar({
                 maxWidth: "180px",
               }}
             >
-              {resumeFileName}
+              {resumeFileName ?? pendingResumeFileName}
             </span>
             <button
               type="button"
