@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Flex, Box } from "@chakra-ui/react";
 import useJobAgent from "./hooks/useJobAgent";
+import { getToolName, isToolUIPart } from "ai";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import DocumentEditor from "./components/DocumentEditor";
 import { theme } from "./types";
-import type { ConversationMeta } from "./types";
+import type { ConversationMeta, UIMessagePart } from "./types";
 
 const CONVOS_KEY = "jra_conversations";
 const ACTIVE_KEY = "jra_active_session";
@@ -32,15 +33,25 @@ function loadActiveSession(convos: ConversationMeta[]): string {
 
 // ─── Inner component: keyed by sessionId so hooks fully reset on switch ──────
 
+interface OpenDocument {
+  id: string;
+  title: string;
+  content: string;
+}
+
 interface ChatSessionProps {
   sessionId: string;
   onTitleUpdate: (title: string) => void;
   onResumeStateChange: (fileName: string | undefined) => void;
   onOpenDocument: (doc: { title: string; content: string }) => void;
-  sendRef: React.MutableRefObject<((text: string) => void) | null>;
+  pendingResume: { text: string; fileName: string } | null;
+  onClearPendingResume: () => void;
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
+  editorOpen: boolean;
+  activeDocumentTitle: string | null;
+  onUpdateActiveDocument: (content: string) => void;
 }
 
 function ChatSession({
@@ -48,10 +59,14 @@ function ChatSession({
   onTitleUpdate,
   onResumeStateChange,
   onOpenDocument,
-  sendRef,
+  pendingResume,
+  onClearPendingResume,
   resumeFileName,
   onResumeExtracted,
   onResumeRemove,
+  editorOpen,
+  activeDocumentTitle,
+  onUpdateActiveDocument,
 }: ChatSessionProps) {
   const { messages, sendMessage, agentState, isStreaming } =
     useJobAgent(sessionId);
@@ -65,11 +80,17 @@ function ChatSession({
     onResumeStateChange(agentState.resumeFileName);
   }, [agentState.resumeFileName, onResumeStateChange]);
 
+  // Fix 2 — attach pending resume to the next user send
   const handleSend = useCallback(
     (text: string) => {
-      sendMessage({ text });
+      if (pendingResume) {
+        sendMessage({ text: `[resume-upload:${pendingResume.fileName}] ${text}` });
+        onClearPendingResume();
+      } else {
+        sendMessage({ text });
+      }
     },
-    [sendMessage],
+    [sendMessage, pendingResume, onClearPendingResume],
   );
 
   const handleRetry = useCallback(() => {
@@ -78,10 +99,31 @@ function ChatSession({
     if (text) sendMessage({ text });
   }, [messages, sendMessage]);
 
+  // Fix 3 — auto-open or auto-refresh editor when agent emits a generateDocument output
+  const lastGenDocContentRef = useRef<string | null>(null);
   useEffect(() => {
-    sendRef.current = (text: string) => sendMessage({ text });
-    return () => { sendRef.current = null; };
-  }, [sendMessage, sendRef]);
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant) return;
+    const parts = [...(lastAssistant.parts ?? [])].reverse();
+    for (const p of parts) {
+      const aiP = p as Parameters<typeof isToolUIPart>[0];
+      if (!isToolUIPart(aiP) || getToolName(aiP) !== "generateDocument") continue;
+      const typed = p as UIMessagePart;
+      if (typed.state !== "output-available") continue;
+      const input = typed.input as { title?: string } | undefined;
+      const output = typed.output as { content?: string } | undefined;
+      const title = input?.title ?? "Document";
+      const content = output?.content ?? "";
+      if (lastGenDocContentRef.current === content) break;
+      lastGenDocContentRef.current = content;
+      if (editorOpen && activeDocumentTitle === title) {
+        onUpdateActiveDocument(content);
+      } else {
+        onOpenDocument({ title, content });
+      }
+      break;
+    }
+  }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ChatWindow
@@ -93,6 +135,7 @@ function ChatSession({
       resumeFileName={resumeFileName}
       onResumeExtracted={onResumeExtracted}
       onResumeRemove={onResumeRemove}
+      pendingResumeFileName={pendingResume?.fileName}
     />
   );
 }
@@ -121,10 +164,16 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [resumeFileName, setResumeFileName] = useState<string | undefined>();
-  const [editorDocument, setEditorDocument] = useState<{ title: string; content: string } | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
 
-  const sendRef = useRef<((text: string) => void) | null>(null);
+  // Fix 2 — pending resume staged here, sent on next user submit
+  const [pendingResume, setPendingResume] = useState<{ text: string; fileName: string } | null>(null);
+
+  // Fix 4 — document stack replaces single editorDocument
+  const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const editorOpen = openDocuments.length > 0;
+  const activeDocument = openDocuments.find((d) => d.id === activeDocumentId) ?? null;
+  const activeDocumentTitle = activeDocument?.title ?? null;
 
   useEffect(() => {
     localStorage.setItem(ACTIVE_KEY, activeSessionId);
@@ -157,14 +206,14 @@ export default function App() {
     };
     setConversations((prev) => [entry, ...prev]);
     setActiveSessionId(id);
-    setEditorOpen(false);
-    setEditorDocument(null);
+    setOpenDocuments([]);
+    setActiveDocumentId(null);
   }, []);
 
   const handleSelectConversation = useCallback((id: string) => {
     setActiveSessionId(id);
-    setEditorOpen(false);
-    setEditorDocument(null);
+    setOpenDocuments([]);
+    setActiveDocumentId(null);
   }, []);
 
   const handleDeleteConversation = useCallback(
@@ -180,14 +229,14 @@ export default function App() {
             updatedAt: new Date().toISOString(),
           };
           setActiveSessionId(newId);
-          setEditorOpen(false);
-          setEditorDocument(null);
+          setOpenDocuments([]);
+          setActiveDocumentId(null);
           return [fresh];
         }
         if (id === activeSessionId) {
           setActiveSessionId(remaining[0].id);
-          setEditorOpen(false);
-          setEditorDocument(null);
+          setOpenDocuments([]);
+          setActiveDocumentId(null);
         }
         return remaining;
       });
@@ -195,28 +244,73 @@ export default function App() {
     [activeSessionId],
   );
 
+  // Fix 1 — no truncation; Fix 2 — stage only, do not send on parse
   const handleResumeExtracted = useCallback((text: string, fileName: string) => {
-    const MAX_RESUME_CHARS = 8000;
-    const capped = text.length > MAX_RESUME_CHARS ? text.slice(0, MAX_RESUME_CHARS) : text;
+    setPendingResume({ text, fileName });
     setResumeFileName(fileName);
-    sendRef.current?.(`[resume-upload:${fileName}] ${capped}`);
   }, []);
 
   const handleResumeRemove = useCallback(() => {
+    setPendingResume(null);
     setResumeFileName(undefined);
+  }, []);
+
+  const handleClearPendingResume = useCallback(() => {
+    setPendingResume(null);
   }, []);
 
   const handleResumeStateChange = useCallback((fileName: string | undefined) => {
     setResumeFileName(fileName);
   }, []);
 
+  // Fix 4 — open / upsert document by title
   const handleOpenDocument = useCallback((doc: { title: string; content: string }) => {
-    setEditorDocument(doc);
-    setEditorOpen(true);
+    setOpenDocuments((prev) => {
+      const existing = prev.find((d) => d.title === doc.title);
+      if (existing) {
+        setActiveDocumentId(existing.id);
+        return prev.map((d) => d.id === existing.id ? { ...d, content: doc.content } : d);
+      }
+      const newDoc = { id: crypto.randomUUID(), ...doc };
+      setActiveDocumentId(newDoc.id);
+      return [...prev, newDoc];
+    });
   }, []);
 
-  const handleCloseEditor = useCallback(() => {
-    setEditorOpen(false);
+  const handleCloseDocument = useCallback(
+    (id: string) => {
+      setOpenDocuments((prev) => {
+        const next = prev.filter((d) => d.id !== id);
+        if (next.length === 0) {
+          setActiveDocumentId(null);
+        } else if (id === activeDocumentId) {
+          setActiveDocumentId(next[next.length - 1].id);
+        }
+        return next;
+      });
+    },
+    [activeDocumentId],
+  );
+
+  const handleSetActiveDocument = useCallback((id: string) => {
+    setActiveDocumentId(id);
+  }, []);
+
+  // Fix 3 — called by ChatSession when agent pushes new content for the active doc
+  const handleUpdateActiveDocument = useCallback(
+    (content: string) => {
+      setOpenDocuments((prev) =>
+        prev.map((d) => d.id === activeDocumentId ? { ...d, content } : d),
+      );
+    },
+    [activeDocumentId],
+  );
+
+  // Fix 4 — called by DocumentEditor's TipTap onUpdate
+  const handleUpdateDocumentContent = useCallback((id: string, content: string) => {
+    setOpenDocuments((prev) =>
+      prev.map((d) => d.id === id ? { ...d, content } : d),
+    );
   }, []);
 
   return (
@@ -256,19 +350,23 @@ export default function App() {
           onTitleUpdate={handleTitleUpdate}
           onResumeStateChange={handleResumeStateChange}
           onOpenDocument={handleOpenDocument}
-          sendRef={sendRef}
+          pendingResume={pendingResume}
+          onClearPendingResume={handleClearPendingResume}
           resumeFileName={resumeFileName}
           onResumeExtracted={handleResumeExtracted}
           onResumeRemove={handleResumeRemove}
+          editorOpen={editorOpen}
+          activeDocumentTitle={activeDocumentTitle}
+          onUpdateActiveDocument={handleUpdateActiveDocument}
         />
       </Box>
-      {editorOpen && editorDocument && (
+      {editorOpen && activeDocument && (
         <DocumentEditor
-          document={editorDocument}
-          onClose={handleCloseEditor}
-          onUpdateContent={(content) =>
-            setEditorDocument((prev) => (prev ? { ...prev, content } : null))
-          }
+          openDocuments={openDocuments}
+          activeDocumentId={activeDocumentId!}
+          onCloseDocument={handleCloseDocument}
+          onSetActiveDocument={handleSetActiveDocument}
+          onUpdateContent={handleUpdateDocumentContent}
         />
       )}
     </Flex>
