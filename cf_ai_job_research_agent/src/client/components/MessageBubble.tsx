@@ -186,7 +186,73 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
           .map((p) => (p as { text: string }).text)
           .join("\n") ?? "";
 
-      if (text.startsWith("[resume-upload:")) return null;
+      const resumeMatch = text.match(/^\[resume-upload:([^\]]+)\]([\s\S]*)$/);
+      if (resumeMatch) {
+        const fileName = resumeMatch[1];
+        const remainingText = resumeMatch[2].trim();
+        return (
+          <>
+            {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
+            <div
+              className="mount-anim"
+              style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", margin: "3px 0", gap: "4px" }}
+            >
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 12px",
+                  background: theme.colors.text,
+                  borderRadius: "18px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                  maxWidth: "68%",
+                }}
+              >
+                <FileText size={13} color="#ffffff" style={{ flexShrink: 0 }} />
+                <span
+                  style={{
+                    fontSize: theme.font.size.sm,
+                    color: "#ffffff",
+                    fontFamily: theme.font.family,
+                    fontWeight: theme.font.weight.medium,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: "220px",
+                  }}
+                >
+                  {fileName}
+                </span>
+              </div>
+              {remainingText && (
+                <div
+                  style={{
+                    background: theme.colors.text,
+                    borderRadius: "18px",
+                    padding: "10px 16px",
+                    maxWidth: "68%",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: theme.font.size.base,
+                      color: "#ffffff",
+                      lineHeight: String(theme.font.lineHeight.relaxed),
+                      fontFamily: theme.font.family,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    <TextWithLinks text={remainingText} color="#ffffff" onLinkClick={setActiveUrl} />
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        );
+      }
+
       if (text.startsWith("[view-entry:")) return null;
 
       return (

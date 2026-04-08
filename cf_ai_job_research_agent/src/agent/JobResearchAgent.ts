@@ -49,7 +49,7 @@ const fullAnalysisSchema = z.object({
 
 /** Explicit caps — Workers AI / SDK defaults can stop generations early (cut-off replies). */
 const OUT = {
-  classify: 256,
+  classify: 50,
   sidebarTitle: 128,
   streamShort: 2048,
   streamReply: 4096,
@@ -96,6 +96,21 @@ function extractResumeUploadTag(text: string): { fileName: string; resumeText: s
   return match ? { fileName: match[1], resumeText: match[2].trim() } : null;
 }
 
+/**
+ * Extract and base64-decode the [editor-content:<base64html>] tag prepended by
+ * the frontend when the editor is open during an update request. Returns the
+ * decoded HTML string, or null if the tag is absent or malformed.
+ */
+function extractEditorContentTag(text: string): string | null {
+  const m = text.match(/^\[editor-content:([A-Za-z0-9+/=]+)\]/);
+  if (!m) return null;
+  try {
+    return atob(m[1]);
+  } catch {
+    return null;
+  }
+}
+
 const JOB_KEYWORDS = [
   "responsibilities",
   "qualifications",
@@ -134,6 +149,7 @@ async function classifyIntent(
   model: LanguageModel,
   lastUserText: string,
   savedEntries: ResearchEntry[],
+  hasGeneratedDocument: boolean,
   abortSignal: AbortSignal | undefined,
 ): Promise<z.infer<typeof intentSchema>> {
   if (extractResumeUploadTag(lastUserText)) {
@@ -166,12 +182,14 @@ async function classifyIntent(
 Saved research entries:
 ${savedSummary}
 
+Document status: A document HAS${hasGeneratedDocument ? "" : " NOT"} been generated in this conversation.
+
 Classify the user's message into exactly one intent:
 - "analyze-job": the message contains or is a job posting/description (usually multi-line, describes a role, requirements, responsibilities).
 - "view-history": the user wants a list or summary of all their saved research.
 - "view-saved-entry": the user is asking to see a specific saved entry from the list above. If matched, also return its id in entryId.
 - "generate-document": the user is requesting a document be generated — a cover letter, email draft, or CV/resume improvement tips. If matched, also return documentType as "cover-letter", "email", or "cv-tips".
-- "update-document": the user is requesting edits or revisions to a previously generated document. Signals include words like update, revise, change, edit, rewrite, fix, adjust, improve the [document type]. Only classify as update-document if the conversation history implies a document has already been generated. If no prior document exists, classify as chat.
+- "update-document": the user is requesting edits or revisions to a previously generated document. Signals include words like update, revise, change, edit, rewrite, fix, adjust, improve the [document type]. Only classify as update-document if the document status above says a document HAS been generated. If no document exists, classify as chat.
 - "chat": anything else (follow-up questions, greetings, general conversation).
 
 Rules:
@@ -402,7 +420,14 @@ Rules:
     const model = workersai("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
     const abortSignal = options?.abortSignal;
     const uiMessages = this.messages as UIMessage[];
-    const lastUser = getLastUserText(uiMessages);
+    let lastUser = getLastUserText(uiMessages);
+
+    // Extract and strip the [editor-content:...] tag before any LLM sees it
+    const liveEditorContent = extractEditorContentTag(lastUser);
+    if (liveEditorContent !== null) {
+      lastUser = lastUser.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "");
+    }
+
     const modelMessages = await convertToModelMessages(
       stripUiToolPartsForLlm(uiMessages),
     );
@@ -462,6 +487,7 @@ Rules:
           writer.write({ type: "start" });
 
           const jobHeuristic = looksLikeJobPosting(textToClassify);
+          const hasGeneratedDocument = getLastGeneratedDocument(uiMessages) !== null;
           let classified!: z.infer<typeof intentSchema>;
           await runAgentStep(
             writer,
@@ -469,7 +495,7 @@ Rules:
             async () => {
               classified = jobHeuristic
                 ? { intent: "analyze-job" as const, entryId: undefined, documentType: undefined }
-                : await classifyIntent(model, textToClassify, savedEntries, abortSignal);
+                : await classifyIntent(model, textToClassify, savedEntries, hasGeneratedDocument, abortSignal);
             },
           );
 
@@ -675,6 +701,53 @@ Read the full conversation history carefully and answer the user's follow-up que
             const ctx = getConversationJobContext(uiMessages, savedEntries);
             const resumeText = (this.state as AgentState)?.resumeText;
 
+            // Hard prerequisite gate — do not generate garbage without both contexts
+            if (!resumeText && !ctx) {
+              const gateStep = beginAgentStep(writer, "Writing reply");
+              const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
+              const st = streamText({
+                model,
+                temperature: 0.7,
+                maxOutputTokens: OUT.streamShort,
+                system: `You are a helpful job application research assistant. ${NO_URL_RULE}`,
+                messages: [{ role: "user", content: "I need both a job description analyzed and a resume uploaded before I can write a tailored document. Which is missing? Please tell the user they need to paste a job description AND upload their resume before you can generate a document." }],
+                abortSignal,
+                onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
+              });
+              writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+              return;
+            }
+            if (!resumeText) {
+              const gateStep = beginAgentStep(writer, "Writing reply");
+              const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
+              const st = streamText({
+                model,
+                temperature: 0.7,
+                maxOutputTokens: OUT.streamShort,
+                system: `You are a helpful job application research assistant. ${NO_URL_RULE}`,
+                messages: [{ role: "user", content: "Please upload your resume first so I can tailor the document to your experience. The user has a job description but no resume uploaded yet." }],
+                abortSignal,
+                onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
+              });
+              writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+              return;
+            }
+            if (!ctx) {
+              const gateStep = beginAgentStep(writer, "Writing reply");
+              const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
+              const st = streamText({
+                model,
+                temperature: 0.7,
+                maxOutputTokens: OUT.streamShort,
+                system: `You are a helpful job application research assistant. ${NO_URL_RULE}`,
+                messages: [{ role: "user", content: "Please paste a job description first so I can tailor the document to the role. The user has a resume but no job description analyzed yet." }],
+                abortSignal,
+                onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
+              });
+              writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+              return;
+            }
+
             const jobContext = ctx?.analysis
               ? `Role: ${ctx.jobTitle} at ${ctx.company}\nCompany Overview: ${ctx.analysis.companyOverview}\nRole Expectations: ${ctx.analysis.roleExpectations}\nPositioning Tips: ${ctx.analysis.positioningTips}`
               : ctx
@@ -848,6 +921,9 @@ Read the full conversation history carefully and answer the user's follow-up que
               providerExecuted: true,
             });
 
+            // Use live editor content (user's manual edits) when available, else fall back to history
+            const docContent = liveEditorContent ?? existingDoc.content;
+
             const revisionSystem = `You are a professional document editor. You are given an existing document in HTML format and a revision instruction from the user. Apply the instruction precisely. Output the complete revised document as clean HTML — same tags and structure as the input (p, strong, em, h2, ul, li, br). Do NOT output preamble, explanation, or markdown. Output ONLY the revised HTML document. ${NO_HREF_RULE}`;
             let revisedContent = "";
             try {
@@ -858,7 +934,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 messages: [
                   {
                     role: "user",
-                    content: `Existing document:\n${existingDoc.content}\n\nRevision instruction:\n${lastUser}`,
+                    content: `Existing document:\n${docContent}\n\nRevision instruction:\n${lastUser}`,
                   },
                 ],
                 abortSignal,
@@ -878,7 +954,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                   messages: [
                     {
                       role: "user",
-                      content: `Existing document:\n${existingDoc.content}\n\nRevision instruction:\n${lastUser}`,
+                      content: `Existing document:\n${docContent}\n\nRevision instruction:\n${lastUser}`,
                     },
                   ],
                   abortSignal,
