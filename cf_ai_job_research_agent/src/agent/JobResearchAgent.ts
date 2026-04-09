@@ -20,6 +20,11 @@ import {
   endAgentStep,
   runAgentStep,
 } from "./agentSteps";
+import {
+  braveWebSearch,
+  decideWebSearchQuery,
+  formatWebSearchContext,
+} from "./webSearch";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -51,6 +56,7 @@ const fullAnalysisSchema = z.object({
 const OUT = {
   classify: 50,
   sidebarTitle: 128,
+  webSearchDecision: 128,
   streamShort: 2048,
   streamReply: 4096,
   documentHtml: 8192,
@@ -59,9 +65,9 @@ const OUT = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Appended to every streamText system prompt to prevent URL confabulation. */
-const NO_URL_RULE =
-  "Do not generate, invent, or infer any URLs, hyperlinks, or web addresses. If you would normally cite a URL, instead describe what the user should search for to find that resource.";
+/** Appended to streamText system prompts: allow real links only when grounded. */
+const GROUNDED_URL_RULE =
+  "Never invent or guess URLs. You may include full https:// links only when they appear in the user's message, in web search results provided in this prompt, or in structured data (saved research, tool outputs) you were given.";
 
 /** Appended to document-generation system prompts. */
 const NO_HREF_RULE =
@@ -461,8 +467,8 @@ Rules:
           temperature: 0.7,
           maxOutputTokens: OUT.streamShort,
           system: hadResume
-            ? `You are a job application research assistant. The user just replaced their previously uploaded resume with a new one. Confirm you have updated to the new resume and that it will now be used for cover letters, email drafts, and CV tips. Be concise (2–3 sentences). ${NO_URL_RULE}`
-            : `You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences). ${NO_URL_RULE}`,
+            ? `You are a job application research assistant. The user just replaced their previously uploaded resume with a new one. Confirm you have updated to the new resume and that it will now be used for cover letters, email drafts, and CV tips. Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`
+            : `You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`,
           messages: [
             {
               role: "user",
@@ -518,7 +524,7 @@ Rules:
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
-                system: `You are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again. ${NO_URL_RULE}`,
+                system: `You are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again. ${GROUNDED_URL_RULE}`,
                 messages: modelMessages,
                 abortSignal,
                 onFinish: async (evt) => {
@@ -566,7 +572,7 @@ Rules:
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a concise career coach. ${NO_URL_RULE}`,
+              system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -600,7 +606,7 @@ Rules:
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamReply,
-              system: `You are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise. ${NO_URL_RULE}`,
+              system: `You are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise. ${GROUNDED_URL_RULE}`,
               messages: modelMessages,
               abortSignal,
               onFinish: async (evt) => {
@@ -621,6 +627,27 @@ Rules:
             const resumeSnippet = resumeText
               ? `\n\nThe user's resume (extracted text, use to personalise advice):\n${resumeText}`
               : "";
+
+            let webBlock = "";
+            const searchDecision = await decideWebSearchQuery(
+              model,
+              lastUser,
+              abortSignal,
+              OUT.webSearchDecision,
+            );
+            const searchQuery = searchDecision.query;
+            if (searchDecision.needsSearch && searchQuery) {
+              await runAgentStep(writer, "Searching the web", async () => {
+                const key = this.env.BRAVE_SEARCH_API_KEY;
+                if (!key?.trim()) {
+                  webBlock =
+                    "## Web search\nLive web search is not configured on this deployment (set BRAVE_SEARCH_API_KEY). Answer from the conversation and prior context only; do not invent URLs.";
+                  return;
+                }
+                const hits = await braveWebSearch(searchQuery, key, abortSignal);
+                webBlock = formatWebSearchContext(hits);
+              });
+            }
 
             let system: string;
 
@@ -649,14 +676,17 @@ Questions to Ask the Interviewer:
 ${ctx.analysis.questionsToAsk.join("\n")}
 ${resumeSnippet}
 
-The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked. ${NO_URL_RULE}`;
+The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked.`;
             } else if (ctx) {
               system = `You are an expert career coach helping a job applicant.
 Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
-Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet} ${NO_URL_RULE}`;
+Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet}`;
             } else {
-              system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet} ${NO_URL_RULE}`;
+              system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
             }
+
+            const webSection = webBlock ? `\n\n${webBlock}` : "";
+            system = `${system}${webSection}\n\n${GROUNDED_URL_RULE}`;
 
             const threadHint = ctx?.analysis
               ? `Follow-up about ${ctx.jobTitle} at ${ctx.company}`
@@ -709,7 +739,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
-                system: `You are a helpful job application research assistant. ${NO_URL_RULE}`,
+                system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
                 messages: [{ role: "user", content: "I need both a job description analyzed and a resume uploaded before I can write a tailored document. Which is missing? Please tell the user they need to paste a job description AND upload their resume before you can generate a document." }],
                 abortSignal,
                 onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
@@ -724,7 +754,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
-                system: `You are a helpful job application research assistant. ${NO_URL_RULE}`,
+                system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
                 messages: [{ role: "user", content: "Please upload your resume first so I can tailor the document to your experience. The user has a job description but no resume uploaded yet." }],
                 abortSignal,
                 onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
@@ -739,7 +769,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
-                system: `You are a helpful job application research assistant. ${NO_URL_RULE}`,
+                system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
                 messages: [{ role: "user", content: "Please paste a job description first so I can tailor the document to the role. The user has a resume but no job description analyzed yet." }],
                 abortSignal,
                 onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
@@ -844,7 +874,7 @@ Read the full conversation history carefully and answer the user's follow-up que
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a concise career coach. ${NO_URL_RULE}`,
+              system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -881,7 +911,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamReply,
-                system: `You are a helpful job application research assistant. The user asked to update a document, but no document has been generated yet in this conversation. Let them know politely and offer to generate one for them. ${NO_URL_RULE}`,
+                system: `You are a helpful job application research assistant. The user asked to update a document, but no document has been generated yet in this conversation. Let them know politely and offer to generate one for them. ${GROUNDED_URL_RULE}`,
                 messages: modelMessages,
                 abortSignal,
                 onFinish: async (evt) => {
@@ -981,7 +1011,7 @@ Read the full conversation history carefully and answer the user's follow-up que
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a concise career coach. ${NO_URL_RULE}`,
+              system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -1129,7 +1159,7 @@ Rules:
             model,
             temperature: 0.7,
             maxOutputTokens: OUT.streamShort,
-            system: `You are a concise career coach. ${NO_URL_RULE}`,
+            system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
             messages: [
               {
                 role: "user",
