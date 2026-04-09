@@ -196,10 +196,12 @@ export default function App() {
 
   const handleTitleUpdate = useCallback(
     (title: string) => {
+      const next = title.trim();
+      if (!next) return;
       setConversations((prev) =>
         prev.map((c) =>
           c.id === activeSessionId
-            ? { ...c, title, updatedAt: new Date().toISOString() }
+            ? { ...c, title: next, updatedAt: new Date().toISOString() }
             : c,
         ),
       );

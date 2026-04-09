@@ -69,6 +69,8 @@ export interface AgentState {
   resumeFileName?: string;
   /** Short label for the conversation list (set by the agent, not raw user text). */
   sidebarTitle?: string;
+  /** Once true, sidebarTitle is not overwritten by job saves or re-generated each turn. */
+  sidebarTitleFinalized?: boolean;
 }
 
 export interface DocumentMeta {
