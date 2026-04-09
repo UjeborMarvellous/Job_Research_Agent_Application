@@ -151,6 +151,65 @@ function looksLikeJobPosting(text: string): boolean {
   return false;
 }
 
+/**
+ * Short "give me links / apply URL / careers" follow-ups are chat (+ web search),
+ * not structured job extraction — even if they mention role titles.
+ */
+function shouldForceChatInsteadOfJobAnalysis(text: string): boolean {
+  if (looksLikeJobPosting(text)) return false;
+  const trimmed = text.trim();
+  if (trimmed.length > 4500) return false;
+  const t = trimmed.toLowerCase();
+  const asksLinkOrApply =
+    /\b(direct )?link(s)?\b/.test(t) ||
+    /\burl(s)?\b/.test(t) ||
+    /\bcareers?\b/.test(t) ||
+    /\bwhere (do |can )?i apply\b/.test(t) ||
+    /\bapply (for|online|here)\b/.test(t) ||
+    /\b(job )?posting (url|link)\b/.test(t) ||
+    /\bofficial (site|website|page)\b/.test(t);
+  if (!asksLinkOrApply) return false;
+  if (
+    trimmed.length >= 900 &&
+    /(responsibilities|requirements|qualifications|what you('ll| will) do|years of experience)/i.test(
+      trimmed,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Block saving junk research when extraction had no real company/posting signal. */
+function isPersistableJobAnalysis(
+  company: string,
+  jobTitle: string,
+  companyOverview: string,
+  userSourceText: string,
+): boolean {
+  const c = company.trim().toLowerCase();
+  const overview = companyOverview.trim().toLowerCase();
+  const src = userSourceText.trim();
+  if (!company.trim() || !jobTitle.trim()) return false;
+  if (
+    c === "unknown company" ||
+    c === "unknown" ||
+    c === "n/a" ||
+    c === "not specified" ||
+    /^unknown(\s+company)?$/.test(c)
+  ) {
+    return false;
+  }
+  if (
+    src.length < 600 &&
+    (/unknown company|not provided|cannot be determined|missing as the company name/.test(overview) ||
+      /company name is not provided/.test(overview))
+  ) {
+    return false;
+  }
+  return true;
+}
+
 async function classifyIntent(
   model: LanguageModel,
   lastUserText: string,
@@ -191,17 +250,18 @@ ${savedSummary}
 Document status: A document HAS${hasGeneratedDocument ? "" : " NOT"} been generated in this conversation.
 
 Classify the user's message into exactly one intent:
-- "analyze-job": the message contains or is a job posting/description (usually multi-line, describes a role, requirements, responsibilities).
+- "analyze-job": the message IS or CONTAINS a substantial job posting/description (multi-line: responsibilities, requirements, role scope, company context). NOT for bare role-title lists or "give me the link" follow-ups.
 - "view-history": the user wants a list or summary of all their saved research.
 - "view-saved-entry": the user is asking to see a specific saved entry from the list above. If matched, also return its id in entryId.
 - "generate-document": the user is requesting a document be generated — a cover letter, email draft, or CV/resume improvement tips. If matched, also return documentType as "cover-letter", "email", or "cv-tips".
 - "update-document": the user is requesting edits or revisions to a previously generated document. Signals include words like update, revise, change, edit, rewrite, fix, adjust, improve the [document type]. Only classify as update-document if the document status above says a document HAS been generated. If no document exists, classify as chat.
-- "chat": anything else (follow-up questions, greetings, general conversation).
+- "chat": follow-up questions, greetings, asking for URLs/careers/apply links, listing job titles without a full posting, or general conversation.
 
 Rules:
 - If the message starts with [view-entry:<id>] always return view-saved-entry with that id.
-- Do NOT classify job postings as "chat" even if they contain words like "history" or "culture".
-- A job posting usually has: job title, responsibilities, requirements, compensation, or company description.
+- If the user asks for links, URLs, careers pages, or where to apply — and did NOT paste a full job description — classify as "chat", not "analyze-job".
+- Do NOT classify full job postings as "chat" even if they contain words like "history" or "culture".
+- A real job posting usually includes: responsibilities, requirements, compensation, or detailed company/role description (not only a bullet list of titles).
 - If the user asks to write/draft/generate a cover letter, email, or resume tips, classify as "generate-document".`,
       prompt: lastUserText,
       abortSignal,
@@ -351,6 +411,19 @@ function shouldRunLlmSidebarTitle(lastUser: string): boolean {
   return true;
 }
 
+/** Immediate short label so JD saves never see an empty sidebarTitle (race with LLM titling). */
+function provisionalSidebarTitleFromUserText(text: string): string {
+  const resume = extractResumeUploadTag(text);
+  const body = resume ? resume.resumeText.trim() : text.trim();
+  if (resume && !body) return "";
+  let t = body;
+  t = t.replace(/^\[view-entry:[^\]]+\]\s*/i, "").trim();
+  t = t.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+  if (!t) return "";
+  const words = t.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
+  return clipSidebarTitle(words);
+}
+
 // ─── Agent ────────────────────────────────────────────────────────────────────
 
 export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
@@ -359,13 +432,20 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     resumeText: undefined,
     resumeFileName: undefined,
     sidebarTitle: undefined,
+    sidebarTitleFinalized: false,
   };
 
   private async persistSidebarTitle(title: string): Promise<void> {
     const clipped = clipSidebarTitle(title);
     if (!clipped) return;
+    if (this.state.sidebarTitleFinalized === true) return;
+    if (this.state.sidebarTitle?.trim()) return;
     try {
-      await this.setState({ ...this.state, sidebarTitle: clipped });
+      await this.setState({
+        ...this.state,
+        sidebarTitle: clipped,
+        sidebarTitleFinalized: true,
+      });
     } catch (e) {
       console.error("persistSidebarTitle:", e);
     }
@@ -377,7 +457,13 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     threadHint: string | undefined,
     abortSignal: AbortSignal | undefined,
   ): Promise<void> {
-    if (this.state.sidebarTitle?.trim()) return;
+    if (this.state.sidebarTitleFinalized === true) return;
+    if (
+      this.state.sidebarTitle?.trim() &&
+      this.state.sidebarTitleFinalized !== false
+    ) {
+      return;
+    }
     if (!shouldRunLlmSidebarTitle(lastUser)) return;
     try {
       const { object } = await generateObject({
@@ -395,7 +481,13 @@ Rules:
           : `Latest user message:\n${lastUser.slice(0, 2000)}`,
         abortSignal,
       });
-      await this.persistSidebarTitle(object.title);
+      const clipped = clipSidebarTitle(object.title);
+      if (!clipped) return;
+      await this.setState({
+        ...this.state,
+        sidebarTitle: clipped,
+        sidebarTitleFinalized: true,
+      });
     } catch {
       /* ignore */
     }
@@ -439,6 +531,26 @@ Rules:
     );
     const savedEntries = (this.state?.researches ?? []) as ResearchEntry[];
 
+    if (
+      this.state.sidebarTitleFinalized !== true &&
+      !this.state.sidebarTitle?.trim() &&
+      !extractResumeUploadTag(lastUser) &&
+      !extractViewEntryTag(lastUser)
+    ) {
+      const seed = provisionalSidebarTitleFromUserText(lastUser);
+      if (seed) {
+        try {
+          await this.setState({
+            ...this.state,
+            sidebarTitle: seed,
+            sidebarTitleFinalized: false,
+          });
+        } catch (e) {
+          console.error("seed sidebar title:", e);
+        }
+      }
+    }
+
     // ── Resume upload: store resume, then optionally fall through to intent ───
     let tagIntentText: string | null = null;
     const resumeTag = extractResumeUploadTag(lastUser);
@@ -453,7 +565,12 @@ Rules:
           ...this.state,
           resumeText: resumeTag.resumeText,
           resumeFileName: resumeTag.fileName,
-          sidebarTitle: clipSidebarTitle(`Resume: ${fileLabel}`),
+          ...(this.state.sidebarTitleFinalized !== true && !this.state.sidebarTitle?.trim()
+            ? {
+                sidebarTitle: clipSidebarTitle(`Resume: ${fileLabel}`),
+                sidebarTitleFinalized: true,
+              }
+            : {}),
         });
       } catch (err) {
         console.error("Failed to store resume:", err);
@@ -499,9 +616,27 @@ Rules:
             writer,
             jobHeuristic ? "Detected job posting" : "Understanding your request",
             async () => {
-              classified = jobHeuristic
-                ? { intent: "analyze-job" as const, entryId: undefined, documentType: undefined }
-                : await classifyIntent(model, textToClassify, savedEntries, hasGeneratedDocument, abortSignal);
+              if (shouldForceChatInsteadOfJobAnalysis(textToClassify)) {
+                classified = {
+                  intent: "chat" as const,
+                  entryId: undefined,
+                  documentType: undefined,
+                };
+              } else if (jobHeuristic) {
+                classified = {
+                  intent: "analyze-job" as const,
+                  entryId: undefined,
+                  documentType: undefined,
+                };
+              } else {
+                classified = await classifyIntent(
+                  model,
+                  textToClassify,
+                  savedEntries,
+                  hasGeneratedDocument,
+                  abortSignal,
+                );
+              }
             },
           );
 
@@ -1033,9 +1168,10 @@ Read the full conversation history carefully and answer the user's follow-up que
           // ── analyze-job (default) ───────────────────────────────────────────
           let result: z.infer<typeof fullAnalysisSchema>;
           const extractId = beginAgentStep(writer, "Extracting job details");
-          const analysisSystem = `You are an expert career advisor. From the user's message, extract the job title and company name, then produce a detailed, specific analysis grounded entirely in the posting text. Use "Unknown company" only if the company truly cannot be determined.
+          const analysisSystem = `You are an expert career advisor. From the user's message, extract the job title and company name, then produce a detailed, specific analysis grounded entirely in the posting text.
 
 Rules:
+- Extract company and jobTitle only from what the user actually wrote; do not invent an employer name.
 - Do not invent requirements, benefits, or tech stack not implied by the posting.
 - Each string field: 2–5 tight paragraphs or structured sentences; avoid filler.
 - questionsToAsk: at least 5, each specific to this role and company.
@@ -1094,6 +1230,36 @@ Rules:
 
           const { jobTitle, company, ...analysis } = result;
 
+          if (!isPersistableJobAnalysis(company, jobTitle, analysis.companyOverview, lastUser)) {
+            const bailStep = beginAgentStep(writer, "Writing reply");
+            const wrappedFinish = this.withSidebarTitleAfterStream(
+              onFinish,
+              model,
+              lastUser,
+              "Job analysis skipped — input was not a saveable posting",
+              abortSignal,
+            );
+            const st = streamText({
+              model,
+              temperature: 0.7,
+              maxOutputTokens: OUT.streamShort,
+              system: `You are a helpful job research assistant. ${GROUNDED_URL_RULE}`,
+              messages: [
+                {
+                  role: "user",
+                  content: `The user's message was too thin to save as structured job research (missing a clear company and/or full posting). Their message:\n---\n${lastUser.slice(0, 3500)}\n---\nExplain in 2–4 sentences: (1) To run a full saved analysis they should paste the complete job description including company name. (2) If they only need apply/careers links, they should ask in plain language and name the employer (you can use web search when available). Be concise.`,
+                },
+              ],
+              abortSignal,
+              onFinish: async (evt) => {
+                endAgentStep(writer, bailStep, true);
+                await wrappedFinish(evt);
+              },
+            });
+            writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+            return;
+          }
+
           const saveId = beginAgentStep(writer, "Saving to your research");
           try {
             const current = (this.state?.researches ?? []) as ResearchEntry[];
@@ -1125,7 +1291,6 @@ Rules:
             await this.setState({
               ...this.state,
               researches: updated,
-              sidebarTitle: clipSidebarTitle(`${jobTitle} at ${company}`),
             });
             endAgentStep(writer, saveId, true);
           } catch (persistErr) {
