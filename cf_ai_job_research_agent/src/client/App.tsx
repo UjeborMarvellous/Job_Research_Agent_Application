@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Flex, Box } from "@chakra-ui/react";
 import useJobAgent from "./hooks/useJobAgent";
-import { getToolName, isToolUIPart } from "ai";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import DocumentEditor from "./components/DocumentEditor";
 import { theme } from "./types";
-import type { ConversationMeta, UIMessagePart } from "./types";
+import type { ConversationMeta } from "./types";
 
 const CONVOS_KEY = "jra_conversations";
 const ACTIVE_KEY = "jra_active_session";
@@ -117,37 +116,27 @@ function ChatSession({
     if (text) sendMessage({ text });
   }, [messages, sendMessage]);
 
-  // Auto-open or auto-refresh editor when agent emits a generateDocument output.
-  // The full document content is read from agentState.lastGeneratedDocument (Durable
-  // Object state) rather than from the message tool-output part, because the
-  // ai-chat message storage truncates large tool outputs.
+  // Auto-open or auto-refresh editor when the DO state records a new document.
+  // Previously this also depended on `messages`, which caused the effect to fire
+  // on every streaming chunk. If the DO state was momentarily stale the guard
+  // would compare full content vs truncated message-part content, fail, and
+  // re-open the editor mid-stream — the visible "glitch". Now we trigger only
+  // when lastGeneratedDocument itself changes; the DO writes it exactly once per
+  // generation, so the effect runs at most once per document.
   const lastGenDocContentRef = useRef<string | null>(null);
   useEffect(() => {
-    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-    if (!lastAssistant) return;
-    const parts = [...(lastAssistant.parts ?? [])].reverse();
-    for (const p of parts) {
-      const aiP = p as Parameters<typeof isToolUIPart>[0];
-      if (!isToolUIPart(aiP) || getToolName(aiP) !== "generateDocument") continue;
-      const typed = p as UIMessagePart;
-      if (typed.state !== "output-available") continue;
-      const input = typed.input as { title?: string } | undefined;
-      const title = input?.title ?? "Document";
+    const stateDoc = agentState.lastGeneratedDocument;
+    if (!stateDoc?.content) return;
+    if (lastGenDocContentRef.current === stateDoc.content) return;
+    lastGenDocContentRef.current = stateDoc.content;
 
-      // Prefer full content from DO state (never truncated) over message parts
-      const stateDoc = agentState.lastGeneratedDocument;
-      const content = stateDoc?.content ?? (typed.output as { content?: string })?.content ?? "";
-
-      if (lastGenDocContentRef.current === content) break;
-      lastGenDocContentRef.current = content;
-      if (editorOpen && activeDocumentTitle === title) {
-        onUpdateActiveDocument(content);
-      } else {
-        onOpenDocument({ title, content });
-      }
-      break;
+    const title = stateDoc.title ?? "Document";
+    if (editorOpen && activeDocumentTitle === title) {
+      onUpdateActiveDocument(stateDoc.content);
+    } else {
+      onOpenDocument({ title, content: stateDoc.content });
     }
-  }, [messages, agentState.lastGeneratedDocument]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agentState.lastGeneratedDocument]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ChatWindow

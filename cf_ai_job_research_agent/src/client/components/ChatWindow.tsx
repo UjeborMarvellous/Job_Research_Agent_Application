@@ -207,9 +207,21 @@ export default function ChatWindow({
             </div>
           ) : (
             <>
-              {messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} onOpenDocument={onOpenDocument} stateDocContent={stateDocContent} />
-              ))}
+              {(() => {
+                // stateDocContent is the latest DO-state document and must only
+                // be given to the last assistant bubble. Passing it to all bubbles
+                // means older "Open in Editor" buttons silently reference the
+                // newest document instead of the one they generated.
+                const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id ?? null;
+                return messages.map((msg) => (
+                  <MessageBubble
+                    key={msg.id}
+                    message={msg}
+                    onOpenDocument={onOpenDocument}
+                    stateDocContent={msg.id === lastAssistantId ? stateDocContent : null}
+                  />
+                ));
+              })()}
               {isStreaming && (() => {
                 const last = messages[messages.length - 1];
                 const lastHasParts = last?.role === "assistant" && (last.parts?.length ?? 0) > 0;
