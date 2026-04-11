@@ -53,6 +53,7 @@ interface ChatSessionProps {
   activeDocumentTitle: string | null;
   activeDocumentContent: string | null;
   onUpdateActiveDocument: (content: string) => void;
+  onUserSend: () => void;
 }
 
 function ChatSession({
@@ -69,6 +70,7 @@ function ChatSession({
   activeDocumentTitle,
   activeDocumentContent,
   onUpdateActiveDocument,
+  onUserSend,
 }: ChatSessionProps) {
   const { messages, sendMessage, agentState, isStreaming } =
     useJobAgent(sessionId);
@@ -95,13 +97,18 @@ function ChatSession({
       }
 
       if (pendingResume) {
-        sendMessage({ text: `[resume-upload:${pendingResume.fileName}] ${messageText}` });
+        const resumePayload = messageText.trim()
+          ? `${pendingResume.text}\n---USER_INTENT---\n${messageText}`
+          : pendingResume.text;
+        sendMessage({ text: `[resume-upload:${pendingResume.fileName}] ${resumePayload}` });
         onClearPendingResume();
       } else {
         sendMessage({ text: messageText });
       }
+
+      onUserSend();
     },
-    [sendMessage, pendingResume, onClearPendingResume, editorOpen, activeDocumentContent],
+    [sendMessage, pendingResume, onClearPendingResume, editorOpen, activeDocumentContent, onUserSend],
   );
 
   const handleRetry = useCallback(() => {
@@ -110,7 +117,10 @@ function ChatSession({
     if (text) sendMessage({ text });
   }, [messages, sendMessage]);
 
-  // Fix 3 — auto-open or auto-refresh editor when agent emits a generateDocument output
+  // Auto-open or auto-refresh editor when agent emits a generateDocument output.
+  // The full document content is read from agentState.lastGeneratedDocument (Durable
+  // Object state) rather than from the message tool-output part, because the
+  // ai-chat message storage truncates large tool outputs.
   const lastGenDocContentRef = useRef<string | null>(null);
   useEffect(() => {
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
@@ -122,9 +132,12 @@ function ChatSession({
       const typed = p as UIMessagePart;
       if (typed.state !== "output-available") continue;
       const input = typed.input as { title?: string } | undefined;
-      const output = typed.output as { content?: string } | undefined;
       const title = input?.title ?? "Document";
-      const content = output?.content ?? "";
+
+      // Prefer full content from DO state (never truncated) over message parts
+      const stateDoc = agentState.lastGeneratedDocument;
+      const content = stateDoc?.content ?? (typed.output as { content?: string })?.content ?? "";
+
       if (lastGenDocContentRef.current === content) break;
       lastGenDocContentRef.current = content;
       if (editorOpen && activeDocumentTitle === title) {
@@ -134,7 +147,7 @@ function ChatSession({
       }
       break;
     }
-  }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [messages, agentState.lastGeneratedDocument]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ChatWindow
@@ -143,6 +156,7 @@ function ChatSession({
       onSend={handleSend}
       onRetry={handleRetry}
       onOpenDocument={onOpenDocument}
+      stateDocContent={agentState.lastGeneratedDocument?.content ?? null}
       resumeFileName={resumeFileName}
       onResumeExtracted={onResumeExtracted}
       onResumeRemove={onResumeRemove}
@@ -201,7 +215,7 @@ export default function App() {
       setConversations((prev) =>
         prev.map((c) =>
           c.id === activeSessionId
-            ? { ...c, title: next, updatedAt: new Date().toISOString() }
+            ? { ...c, title: next }
             : c,
         ),
       );
@@ -275,6 +289,16 @@ export default function App() {
   const handleResumeStateChange = useCallback((fileName: string | undefined) => {
     setUploadedResumeFileName(fileName);
   }, []);
+
+  const handleUserSend = useCallback(() => {
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === activeSessionId
+          ? { ...c, updatedAt: new Date().toISOString() }
+          : c,
+      ),
+    );
+  }, [activeSessionId]);
 
   // Fix 4 — open / upsert document by title
   const handleOpenDocument = useCallback((doc: { title: string; content: string }) => {
@@ -372,6 +396,7 @@ export default function App() {
           activeDocumentTitle={activeDocumentTitle}
           activeDocumentContent={activeDocument?.content ?? null}
           onUpdateActiveDocument={handleUpdateActiveDocument}
+          onUserSend={handleUserSend}
         />
       </Box>
       {editorOpen && activeDocument && (

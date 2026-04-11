@@ -53,6 +53,8 @@ interface ChatWindowProps {
   onSend: (text: string) => void;
   onRetry?: () => void;
   onOpenDocument?: (doc: { title: string; content: string }) => void;
+  /** Full document from DO state (bypasses message truncation). */
+  stateDocContent?: string | null;
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
@@ -65,6 +67,7 @@ export default function ChatWindow({
   onSend,
   onRetry,
   onOpenDocument,
+  stateDocContent,
   resumeFileName,
   onResumeExtracted,
   onResumeRemove,
@@ -205,7 +208,7 @@ export default function ChatWindow({
           ) : (
             <>
               {messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} onOpenDocument={onOpenDocument} />
+                <MessageBubble key={msg.id} message={msg} onOpenDocument={onOpenDocument} stateDocContent={stateDocContent} />
               ))}
               {isStreaming && (() => {
                 const last = messages[messages.length - 1];

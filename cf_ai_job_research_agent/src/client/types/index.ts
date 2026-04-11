@@ -71,6 +71,11 @@ export interface AgentState {
   sidebarTitle?: string;
   /** Once true, sidebarTitle is not overwritten by job saves or re-generated each turn. */
   sidebarTitleFinalized?: boolean;
+  /**
+   * Full document content stored in DO state to bypass message-level truncation.
+   * Updated every time a document is generated or revised.
+   */
+  lastGeneratedDocument?: DocumentMeta | null;
 }
 
 export interface DocumentMeta {

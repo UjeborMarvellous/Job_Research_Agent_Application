@@ -28,6 +28,20 @@ import { theme } from "../types";
 import { exportAsPdf, exportAsDocx, exportAsTxt } from "../utils/exportDocument";
 import { Button } from "./ui/button";
 
+/**
+ * Strip stray <html>, <head>, <body> wrapper tags that the model occasionally emits.
+ * TipTap/ProseMirror will misinterpret these and scatter the layout.
+ * We also collapse multiple blank lines and trim whitespace.
+ */
+function normalizeDocHtml(html: string): string {
+  return html
+    .replace(/<\/?html[^>]*>/gi, "")
+    .replace(/<\/?head[^>]*>[\s\S]*?<\/head>/gi, "")
+    .replace(/<\/?body[^>]*>/gi, "")
+    .replace(/<!DOCTYPE[^>]*>/gi, "")
+    .trim();
+}
+
 interface OpenDocument {
   id: string;
   title: string;
@@ -102,7 +116,9 @@ export default function DocumentEditor({
     },
   });
 
-  // Fix 3 + 4 — reinitialize editor when active document switches or content is pushed from agent
+  // Reinitialize editor when active document switches or content is pushed from agent.
+  // normalizeDocHtml strips stray <html>/<head>/<body> wrappers that the model occasionally
+  // emits, which cause TipTap/ProseMirror to produce a broken layout on setContent.
   const prevDocIdRef = React.useRef<string | null>(null);
   const prevContentRef = React.useRef<string | null>(null);
   useEffect(() => {
@@ -110,7 +126,7 @@ export default function DocumentEditor({
     const docSwitched = prevDocIdRef.current !== activeDoc.id;
     const contentPushed = !docSwitched && prevContentRef.current !== activeDoc.content;
     if (docSwitched || contentPushed) {
-      editor.commands.setContent(activeDoc.content ?? "");
+      editor.commands.setContent(normalizeDocHtml(activeDoc.content ?? ""));
       prevDocIdRef.current = activeDoc.id;
       prevContentRef.current = activeDoc.content;
       if (contentPushed) {

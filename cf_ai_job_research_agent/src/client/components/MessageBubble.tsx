@@ -13,14 +13,24 @@ type Segment = { type: "text"; value: string } | { type: "url"; value: string };
 
 const URL_RE = /https?:\/\/[^\s<>"]+/g;
 
+/** Strip trailing punctuation that is often captured as part of a URL but is not part of it. */
+function cleanUrl(raw: string): string {
+  return raw.replace(/[.,);:!?'"]+$/, "");
+}
+
 function parseTextWithLinks(text: string): Segment[] {
   const segments: Segment[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
   URL_RE.lastIndex = 0;
   while ((m = URL_RE.exec(text)) !== null) {
+    const url = cleanUrl(m[0]);
     if (m.index > last) segments.push({ type: "text", value: text.slice(last, m.index) });
-    segments.push({ type: "url", value: m[0] });
+    segments.push({ type: "url", value: url });
+    // If trailing punctuation was stripped, keep it as plain text
+    if (m[0].length > url.length) {
+      segments.push({ type: "text", value: m[0].slice(url.length) });
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) segments.push({ type: "text", value: text.slice(last) });
@@ -173,9 +183,11 @@ function looksLikeRawFunctionCallJson(text: string): boolean {
 interface MessageBubbleProps {
   message: UIMessage;
   onOpenDocument?: (doc: { title: string; content: string }) => void;
+  /** Full document from DO state — used instead of (possibly truncated) message part content. */
+  stateDocContent?: string | null;
 }
 
-export default function MessageBubble({ message, onOpenDocument }: MessageBubbleProps) {
+export default function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubbleProps) {
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
 
   try {
@@ -403,7 +415,8 @@ export default function MessageBubble({ message, onOpenDocument }: MessageBubble
                   const input = aiPart.input as { title?: string; documentType?: string };
                   const output = aiPart.output as { content?: string; format?: string };
                   const title = input?.title ?? "Document";
-                  const content = output?.content ?? "";
+                  // Prefer full content from DO state over (possibly truncated) message part
+                  const content = stateDocContent ?? output?.content ?? "";
 
                   return (
                     <div

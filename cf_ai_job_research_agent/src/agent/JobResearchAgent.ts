@@ -21,7 +21,7 @@ import {
   runAgentStep,
 } from "./agentSteps";
 import {
-  braveWebSearch,
+  braveWebSearchMulti,
   decideWebSearchQuery,
   formatWebSearchContext,
 } from "./webSearch";
@@ -62,6 +62,71 @@ const OUT = {
   documentHtml: 8192,
   jobAnalysisJson: 8192,
 } as const;
+
+/**
+ * Per-docType output token cap.
+ * Cover letters and emails are 3-4 paragraphs (~600 tokens max).
+ * CV tips can be longer with headers and lists — give them a bit more room.
+ */
+function docMaxOutputTokens(docType: string): number {
+  return docType === "cv-tips" ? 3072 : 2048;
+}
+
+/**
+ * Truncate a string to maxChars, appending "..." if cut.
+ * Used to cap resume and job context fields before they are embedded in prompts.
+ */
+function capStr(s: string, maxChars: number): string {
+  if (!s || s.length <= maxChars) return s;
+  return `${s.slice(0, maxChars)}...`;
+}
+
+/**
+ * Detect a clear cover-letter / email / cv-tips generation request.
+ * Returns the docType string or null if the message does not match.
+ * Used as a pre-LLM heuristic to avoid misclassification as "chat".
+ */
+function looksLikeDocumentRequest(text: string): "cover-letter" | "email" | "cv-tips" | null {
+  const t = text.toLowerCase();
+  if (/cover[\s-]?letter/.test(t)) return "cover-letter";
+  if (/application[\s-]?email|email.*application/.test(t)) return "email";
+  if (/cv[\s-]?tip|resume[\s-]?tip|improve.*(?:cv|resume)|(?:cv|resume).*tip/.test(t)) return "cv-tips";
+  return null;
+}
+
+/** True when the message contains clear document-revision signals. */
+function looksLikeRevisionRequest(text: string): boolean {
+  return /\b(?:update|revise|change|edit|rewrite|fix|adjust|improve|modify|alter|make it|make the)\b/i.test(text);
+}
+
+/**
+ * Scan conversation history backwards for a user message that looks like a job
+ * posting. Returns the raw text, or null if nothing matches.
+ * Used as a fallback when structured analysis was not saved.
+ */
+function findRawJobDescriptionInHistory(messages: UIMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    const parts = m.parts ?? [];
+    const text = parts
+      .filter(
+        (p): p is { type: "text"; text: string } =>
+          p.type === "text" && typeof (p as { text?: string }).text === "string",
+      )
+      .map((p) => p.text)
+      .join("\n")
+      .trim();
+    // Skip resume-upload messages entirely — resume text isn't a JD
+    if (/^\[resume-upload:/i.test(text)) continue;
+    const cleaned = text
+      .replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "")
+      .replace(/^\[view-entry:[^\]]+\]\s*/, "")
+      .trim();
+    if (looksLikeJobPosting(cleaned)) return cleaned;
+  }
+  return null;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -253,8 +318,8 @@ Classify the user's message into exactly one intent:
 - "analyze-job": the message IS or CONTAINS a substantial job posting/description (multi-line: responsibilities, requirements, role scope, company context). NOT for bare role-title lists or "give me the link" follow-ups.
 - "view-history": the user wants a list or summary of all their saved research.
 - "view-saved-entry": the user is asking to see a specific saved entry from the list above. If matched, also return its id in entryId.
-- "generate-document": the user is requesting a document be generated — a cover letter, email draft, or CV/resume improvement tips. If matched, also return documentType as "cover-letter", "email", or "cv-tips".
-- "update-document": the user is requesting edits or revisions to a previously generated document. Signals include words like update, revise, change, edit, rewrite, fix, adjust, improve the [document type]. Only classify as update-document if the document status above says a document HAS been generated. If no document exists, classify as chat.
+- "generate-document": the user is requesting a document be generated — a cover letter, email draft, or CV/resume improvement tips. If matched, also return documentType as "cover-letter", "email", or "cv-tips". This includes phrases like "write me a cover letter", "give me another cover letter", "draft a new version", "generate a cover letter with a different tone", "can you write a cover letter", "another cover letter please".
+- "update-document": the user is requesting edits or revisions to a previously generated document. Signals include words like update, revise, change, edit, rewrite, fix, adjust, improve the [document type]. Only classify as update-document if the document status above says a document HAS been generated. If no document exists, classify as generate-document.
 - "chat": follow-up questions, greetings, asking for URLs/careers/apply links, listing job titles without a full posting, or general conversation.
 
 Rules:
@@ -262,7 +327,8 @@ Rules:
 - If the user asks for links, URLs, careers pages, or where to apply — and did NOT paste a full job description — classify as "chat", not "analyze-job".
 - Do NOT classify full job postings as "chat" even if they contain words like "history" or "culture".
 - A real job posting usually includes: responsibilities, requirements, compensation, or detailed company/role description (not only a bullet list of titles).
-- If the user asks to write/draft/generate a cover letter, email, or resume tips, classify as "generate-document".`,
+- Any request to write, draft, generate, or produce a cover letter, application email, or CV tips — even if phrased as "another one", "a new version", "a different tone" — MUST be "generate-document", never "chat".
+- Only use "update-document" when the user clearly wants to modify the existing document (update, revise, change, edit, rewrite, fix, adjust, improve) and a document already exists.`,
       prompt: lastUserText,
       abortSignal,
     });
@@ -414,8 +480,16 @@ function shouldRunLlmSidebarTitle(lastUser: string): boolean {
 /** Immediate short label so JD saves never see an empty sidebarTitle (race with LLM titling). */
 function provisionalSidebarTitleFromUserText(text: string): string {
   const resume = extractResumeUploadTag(text);
-  const body = resume ? resume.resumeText.trim() : text.trim();
-  if (resume && !body) return "";
+  let body: string;
+  if (resume) {
+    // Prefer the user intent portion over the full resume body for the title
+    const delimIdx = resume.resumeText.indexOf("---USER_INTENT---");
+    body = delimIdx >= 0 ? resume.resumeText.slice(delimIdx + 17).trim() : "";
+    if (!body) return "";
+  } else {
+    body = text.trim();
+  }
+  if (!body) return "";
   let t = body;
   t = t.replace(/^\[view-entry:[^\]]+\]\s*/i, "").trim();
   t = t.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
@@ -556,6 +630,13 @@ Rules:
     const resumeTag = extractResumeUploadTag(lastUser);
     if (resumeTag) {
       const hadResume = !!(this.state as AgentState)?.resumeText;
+      // Split resume body from optional user intent (delimiter added by client)
+      const delimIdx = resumeTag.resumeText.indexOf("---USER_INTENT---");
+      const actualResumeText =
+        delimIdx >= 0 ? resumeTag.resumeText.slice(0, delimIdx).trim() : resumeTag.resumeText.trim();
+      const intentFromTag =
+        delimIdx >= 0 ? resumeTag.resumeText.slice(delimIdx + "---USER_INTENT---".length).trim() : "";
+
       try {
         const fileLabel =
           resumeTag.fileName.length > 36
@@ -563,7 +644,7 @@ Rules:
             : resumeTag.fileName;
         await this.setState({
           ...this.state,
-          resumeText: resumeTag.resumeText,
+          resumeText: actualResumeText,
           resumeFileName: resumeTag.fileName,
           ...(this.state.sidebarTitleFinalized !== true && !this.state.sidebarTitle?.trim()
             ? {
@@ -576,20 +657,35 @@ Rules:
         console.error("Failed to store resume:", err);
       }
 
-      const intentFromTag = resumeTag.resumeText.trim();
+      if (!intentFromTag && !actualResumeText) {
+        // No text extracted and no intent — likely parsing error
+        return streamText({
+          model,
+          temperature: 0.7,
+          maxOutputTokens: OUT.streamShort,
+          system: `You are a job application research assistant. The user tried to upload a resume but you could not read its contents. Ask them to copy-paste the resume text or try a different file format (plain text or PDF). Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`,
+          messages: [
+            { role: "user", content: `I uploaded my resume: ${resumeTag.fileName}` },
+          ],
+          abortSignal,
+          onFinish,
+        }).toUIMessageStreamResponse({ originalMessages: uiMessages });
+      }
+
       if (!intentFromTag) {
-        // Standalone CV upload — stream confirmation and return early
+        // Standalone CV upload — stream confirmation mentioning key details extracted
+        const snippet = actualResumeText.slice(0, 300);
         return streamText({
           model,
           temperature: 0.7,
           maxOutputTokens: OUT.streamShort,
           system: hadResume
-            ? `You are a job application research assistant. The user just replaced their previously uploaded resume with a new one. Confirm you have updated to the new resume and that it will now be used for cover letters, email drafts, and CV tips. Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`
-            : `You are a job application research assistant. The user just uploaded their resume. Confirm you received it and briefly mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`,
+            ? `You are a job application research assistant. The user just replaced their previously uploaded resume with a new one. You successfully read the resume. Briefly confirm what key details you noticed (name, role/skills if visible) and that it will now be used for cover letters, email drafts, and CV tips. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`
+            : `You are a job application research assistant. The user just uploaded their resume. You successfully read it. Briefly confirm what key details you noticed (name, role/skills if visible) and mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`,
           messages: [
             {
               role: "user",
-              content: `I uploaded my resume: ${resumeTag.fileName}`,
+              content: `I uploaded my resume (${resumeTag.fileName}). Here is the beginning of its content:\n\n${snippet}`,
             },
           ],
           abortSignal,
@@ -611,6 +707,8 @@ Rules:
 
           const jobHeuristic = looksLikeJobPosting(textToClassify);
           const hasGeneratedDocument = getLastGeneratedDocument(uiMessages) !== null;
+          const hasJobContext = getConversationJobContext(uiMessages, savedEntries) !== null;
+          const hasResume = !!((this.state as AgentState)?.resumeText);
           let classified!: z.infer<typeof intentSchema>;
           await runAgentStep(
             writer,
@@ -629,13 +727,27 @@ Rules:
                   documentType: undefined,
                 };
               } else {
-                classified = await classifyIntent(
-                  model,
-                  textToClassify,
-                  savedEntries,
-                  hasGeneratedDocument,
-                  abortSignal,
-                );
+                // Pre-LLM heuristic: catch "another cover letter" / "new version" requests
+                // that the LLM sometimes misroutes to "chat".
+                const docRequestType = looksLikeDocumentRequest(textToClassify);
+                const hasRawJdInHistory = !hasJobContext && findRawJobDescriptionInHistory(uiMessages) !== null;
+                if (docRequestType && (hasJobContext || hasRawJdInHistory) && hasResume) {
+                  if (hasGeneratedDocument && looksLikeRevisionRequest(textToClassify)) {
+                    // User wants to revise the existing document
+                    classified = { intent: "update-document" as const, documentType: docRequestType };
+                  } else {
+                    // Fresh generation (including "another" / "different tone")
+                    classified = { intent: "generate-document" as const, documentType: docRequestType };
+                  }
+                } else {
+                  classified = await classifyIntent(
+                    model,
+                    textToClassify,
+                    savedEntries,
+                    hasGeneratedDocument,
+                    abortSignal,
+                  );
+                }
               }
             },
           );
@@ -771,6 +883,7 @@ Rules:
               OUT.webSearchDecision,
             );
             const searchQuery = searchDecision.query;
+            const searchQuery2 = searchDecision.query2;
             if (searchDecision.needsSearch && searchQuery) {
               await runAgentStep(writer, "Searching the web", async () => {
                 const key = this.env.BRAVE_SEARCH_API_KEY;
@@ -779,7 +892,10 @@ Rules:
                     "## Web search\nLive web search is not configured on this deployment (set BRAVE_SEARCH_API_KEY). Answer from the conversation and prior context only; do not invent URLs.";
                   return;
                 }
-                const hits = await braveWebSearch(searchQuery, key, abortSignal);
+                const queries: [string] | [string, string] = searchQuery2
+                  ? [searchQuery, searchQuery2]
+                  : [searchQuery];
+                const hits = await braveWebSearchMulti(queries, key, abortSignal);
                 webBlock = formatWebSearchContext(hits);
               });
             }
@@ -817,7 +933,16 @@ The user is asking a follow-up question about this role. Answer specifically usi
 Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
 Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet}`;
             } else {
-              system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews. The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
+              system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
+
+IMPORTANT — When the user sends a vague or broad request (e.g. "get me a job", "find me work", "help me get hired", "I need a job"), you MUST:
+1. Briefly acknowledge their request.
+2. Explain that you can give a generic starting point, but results will be much better if they share context: the industry/role they are targeting, their experience level, and ideally a job posting to analyze.
+3. Ask 2-3 short clarifying questions (e.g. "What kind of role are you looking for?", "Do you have a specific job posting you'd like me to analyze?", "What industry or field are you interested in?").
+4. If you have their resume on file, mention specific skills/experience you see and suggest directions based on that.
+Do NOT give a long generic response. Keep it concise and conversational.
+
+The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
             }
 
             const webSection = webBlock ? `\n\n${webBlock}` : "";
@@ -865,39 +990,31 @@ Read the full conversation history carefully and answer the user's follow-up que
           if (intent === "generate-document") {
             const ctx = getConversationJobContext(uiMessages, savedEntries);
             const resumeText = (this.state as AgentState)?.resumeText;
+            // Fallback: if structured analysis was not saved, look for a raw JD in history
+            const rawJdFallback = !ctx ? findRawJobDescriptionInHistory(uiMessages) : null;
+            const hasAnyJobContext = !!(ctx || rawJdFallback);
 
-            // Hard prerequisite gate — do not generate garbage without both contexts
-            if (!resumeText && !ctx) {
-              const gateStep = beginAgentStep(writer, "Writing reply");
-              const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
-              const st = streamText({
-                model,
-                temperature: 0.7,
-                maxOutputTokens: OUT.streamShort,
-                system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
-                messages: [{ role: "user", content: "I need both a job description analyzed and a resume uploaded before I can write a tailored document. Which is missing? Please tell the user they need to paste a job description AND upload their resume before you can generate a document." }],
-                abortSignal,
-                onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
-              });
-              writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
-              return;
-            }
+            // Gate: resume is always required
             if (!resumeText) {
               const gateStep = beginAgentStep(writer, "Writing reply");
               const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
+              const hint = hasAnyJobContext
+                ? "Please upload your resume first so I can tailor the document to your experience."
+                : "I need both a job description and your resume before I can write a tailored document. Please paste a job description and upload your resume.";
               const st = streamText({
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
                 system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
-                messages: [{ role: "user", content: "Please upload your resume first so I can tailor the document to your experience. The user has a job description but no resume uploaded yet." }],
+                messages: [{ role: "user", content: hint }],
                 abortSignal,
                 onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
               });
               writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
               return;
             }
-            if (!ctx) {
+            // Gate: need some form of job context (structured OR raw JD from history)
+            if (!hasAnyJobContext) {
               const gateStep = beginAgentStep(writer, "Writing reply");
               const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
               const st = streamText({
@@ -905,7 +1022,7 @@ Read the full conversation history carefully and answer the user's follow-up que
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
                 system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
-                messages: [{ role: "user", content: "Please paste a job description first so I can tailor the document to the role. The user has a resume but no job description analyzed yet." }],
+                messages: [{ role: "user", content: "Please paste a job description first so I can tailor the document to the role. The user has a resume but no job description yet." }],
                 abortSignal,
                 onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
               });
@@ -913,14 +1030,22 @@ Read the full conversation history carefully and answer the user's follow-up que
               return;
             }
 
+            // Build job context: prefer structured analysis, fall back to raw JD
             const jobContext = ctx?.analysis
-              ? `Role: ${ctx.jobTitle} at ${ctx.company}\nCompany Overview: ${ctx.analysis.companyOverview}\nRole Expectations: ${ctx.analysis.roleExpectations}\nPositioning Tips: ${ctx.analysis.positioningTips}`
+              ? [
+                  `Role: ${ctx.jobTitle} at ${ctx.company}`,
+                  `Company Overview: ${capStr(ctx.analysis.companyOverview, 500)}`,
+                  `Role Expectations: ${capStr(ctx.analysis.roleExpectations, 500)}`,
+                  `Positioning Tips: ${capStr(ctx.analysis.positioningTips, 500)}`,
+                ].join("\n")
               : ctx
                 ? `Role: ${ctx.jobTitle} at ${ctx.company}`
-                : "";
+                : rawJdFallback
+                  ? `Job description from conversation:\n${capStr(rawJdFallback, 2000)}`
+                  : "";
 
             const resumeContext = resumeText
-              ? `\n\nCandidate's Resume:\n${resumeText}`
+              ? `\n\nCandidate's Resume:\n${capStr(resumeText, 3000)}`
               : "";
 
             const docType = documentType ?? "cover-letter";
@@ -961,13 +1086,14 @@ Read the full conversation history carefully and answer the user's follow-up que
             });
 
             const docSystem = `${systemPrompts[docType] ?? systemPrompts["cover-letter"]}\n\nJob Context:\n${jobContext}${resumeContext}`;
+            const docTokenCap = docMaxOutputTokens(docType);
             let fullContent = "";
             try {
               const result = streamText({
                 model,
-                maxOutputTokens: OUT.documentHtml,
+                maxOutputTokens: docTokenCap,
                 system: docSystem,
-                messages: [{ role: "user", content: lastUser }],
+                messages: [{ role: "user", content: `Generate the ${docLabel}.` }],
                 abortSignal,
               });
               const chunks: string[] = [];
@@ -975,14 +1101,18 @@ Read the full conversation history carefully and answer the user's follow-up que
                 chunks.push(chunk);
               }
               fullContent = chunks.join("");
+              const reason = await result.finishReason;
+              if (reason === "length") {
+                console.warn(`[generateDocument] output truncated at token limit — docType=${docType} cap=${docTokenCap}`);
+              }
             } catch (docErr) {
               if (isRateLimitError(docErr)) {
                 await new Promise((r) => setTimeout(r, 4000));
                 const retry = streamText({
                   model,
-                  maxOutputTokens: OUT.documentHtml,
+                  maxOutputTokens: docTokenCap,
                   system: docSystem,
-                  messages: [{ role: "user", content: lastUser }],
+                  messages: [{ role: "user", content: `Generate the ${docLabel}.` }],
                   abortSignal,
                 });
                 const retryChunks: string[] = [];
@@ -990,12 +1120,27 @@ Read the full conversation history carefully and answer the user's follow-up que
                   retryChunks.push(chunk);
                 }
                 fullContent = retryChunks.join("");
+                const retryReason = await retry.finishReason;
+                if (retryReason === "length") {
+                  console.warn(`[generateDocument] retry output truncated — docType=${docType} cap=${docTokenCap}`);
+                }
               } else {
                 throw docErr;
               }
             }
 
             await this.persistSidebarTitle(docTitle);
+
+            // Persist full document to DO state — message storage truncates large
+            // tool outputs, so the client reads the full content from state instead.
+            try {
+              await this.setState({
+                ...this.state,
+                lastGeneratedDocument: { title: docTitle, content: fullContent, documentType: docType },
+              });
+            } catch (e) {
+              console.error("persist lastGeneratedDocument:", e);
+            }
 
             writer.write({
               type: "tool-output-available",
@@ -1086,15 +1231,19 @@ Read the full conversation history carefully and answer the user's follow-up que
               providerExecuted: true,
             });
 
-            // Use live editor content (user's manual edits) when available, else fall back to history
-            const docContent = liveEditorContent ?? existingDoc.content;
+            // Use live editor content (user's manual edits) when available,
+            // then full content from DO state (bypasses message truncation),
+            // then fall back to message history as last resort.
+            const stateDoc = (this.state as AgentState)?.lastGeneratedDocument;
+            const docContent = liveEditorContent ?? stateDoc?.content ?? existingDoc.content;
 
             const revisionSystem = `You are a professional document editor. You are given an existing document in HTML format and a revision instruction from the user. Apply the instruction precisely. Output the complete revised document as clean HTML — same tags and structure as the input (p, strong, em, h2, ul, li, br). Do NOT output preamble, explanation, or markdown. Output ONLY the revised HTML document. ${NO_HREF_RULE}`;
+            const revTokenCap = docMaxOutputTokens(existingDoc.documentType);
             let revisedContent = "";
             try {
               const result = streamText({
                 model,
-                maxOutputTokens: OUT.documentHtml,
+                maxOutputTokens: revTokenCap,
                 system: revisionSystem,
                 messages: [
                   {
@@ -1109,12 +1258,16 @@ Read the full conversation history carefully and answer the user's follow-up que
                 chunks.push(chunk);
               }
               revisedContent = chunks.join("");
+              const reason = await result.finishReason;
+              if (reason === "length") {
+                console.warn(`[updateDocument] output truncated — docType=${existingDoc.documentType} cap=${revTokenCap}`);
+              }
             } catch (revErr) {
               if (isRateLimitError(revErr)) {
                 await new Promise((r) => setTimeout(r, 4000));
                 const retry = streamText({
                   model,
-                  maxOutputTokens: OUT.documentHtml,
+                  maxOutputTokens: revTokenCap,
                   system: revisionSystem,
                   messages: [
                     {
@@ -1129,9 +1282,27 @@ Read the full conversation history carefully and answer the user's follow-up que
                   retryChunks.push(chunk);
                 }
                 revisedContent = retryChunks.join("");
+                const retryReason = await retry.finishReason;
+                if (retryReason === "length") {
+                  console.warn(`[updateDocument] retry truncated — docType=${existingDoc.documentType} cap=${revTokenCap}`);
+                }
               } else {
                 throw revErr;
               }
+            }
+
+            // Persist revised document to DO state (bypasses message truncation)
+            try {
+              await this.setState({
+                ...this.state,
+                lastGeneratedDocument: {
+                  title: existingDoc.title,
+                  content: revisedContent,
+                  documentType: existingDoc.documentType,
+                },
+              });
+            } catch (e) {
+              console.error("persist revised lastGeneratedDocument:", e);
             }
 
             writer.write({
@@ -1320,6 +1491,14 @@ Rules:
           });
 
           const insightStep = beginAgentStep(writer, "Writing reply");
+          // Slim commentary prompt: the ResearchCard already shows the full analysis to the user.
+          // We pass only a short digest so the LLM can give a targeted insight without a heavy input.
+          const commentaryDigest = [
+            `Role: ${jobTitle} at ${company}.`,
+            analysis.cultureSignals ? `Culture signal: ${capStr(analysis.cultureSignals, 300)}` : "",
+            analysis.potentialRedFlags ? `Red flags: ${capStr(analysis.potentialRedFlags, 200)}` : "",
+            analysis.positioningTips ? `Positioning: ${capStr(analysis.positioningTips, 200)}` : "",
+          ].filter(Boolean).join(" ");
           const commentary = streamText({
             model,
             temperature: 0.7,
@@ -1328,17 +1507,7 @@ Rules:
             messages: [
               {
                 role: "user",
-                content: `Job: ${jobTitle} at ${company}.
-
-Full analysis:
-Company Overview: ${analysis.companyOverview}
-Role Expectations: ${analysis.roleExpectations}
-Culture Signals: ${analysis.cultureSignals}
-Potential Red Flags: ${analysis.potentialRedFlags}
-How to Position Yourself: ${analysis.positioningTips}
-Questions to Ask: ${analysis.questionsToAsk.join("; ")}
-
-Based on the full analysis above, give the applicant your most valuable, specific insight about this opportunity. You decide what angle is most important — it could be a stand-out culture signal, a positioning strategy, a red flag to probe, or something about the role expectations that most candidates miss. Be direct and concrete. Do not repeat section headings.`,
+                content: `${commentaryDigest}\n\nGive the applicant one specific, actionable insight about this opportunity — a stand-out signal, a positioning angle, or a red flag to probe. Be direct and concrete. 2–3 sentences max.`,
               },
             ],
             abortSignal,
