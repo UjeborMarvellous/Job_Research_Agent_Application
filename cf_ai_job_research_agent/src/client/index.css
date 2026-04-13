@@ -223,3 +223,39 @@ body {
 /* ─── Placeholder ────────────────────────────────────────────────────────── */
 textarea::placeholder { color: var(--color-text-muted); }
 input::placeholder { color: var(--color-text-muted); }
+
+/* ─── Mobile Drawer & Overlay ────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+.mobile-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.4);
+  animation: fadeIn 200ms ease;
+}
+.mobile-drawer-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  z-index: 51;
+  animation: slideInLeft 200ms ease;
+}
+.mobile-doc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--color-background);
+  display: flex;
+  flex-direction: column;
+  animation: fadeSlideUp 200ms ease;
+}

@@ -1,21 +1,6 @@
-import { generateObject, type LanguageModel } from "ai";
-import { z } from "zod";
+import type { LanguageModel } from "ai";
 
 export type WebSearchHit = { title: string; url: string; description: string };
-
-const webSearchDecisionSchema = z.object({
-  needsSearch: z.boolean(),
-  /**
-   * Primary search query — always set when needsSearch is true.
-   * For deep-research requests a second, complementary query is returned in query2.
-   */
-  query: z.string().max(220).optional(),
-  /**
-   * Optional second query for deep-research signals (company culture, news, interviews).
-   * Only populated when the request clearly asks for thorough research.
-   */
-  query2: z.string().max(220).optional(),
-});
 
 /**
  * True when the user's message contains signals that call for deeper, multi-angle research
@@ -23,10 +8,41 @@ const webSearchDecisionSchema = z.object({
  * "deep dive", "find out everything about").
  */
 function looksLikeDeepResearchRequest(text: string): boolean {
-  const t = text.toLowerCase();
-  return (
-    /\b(?:deep\s*(?:dive|research)|research\s+(?:the\s+)?(?:company|role|employer)|tell me (?:more|everything) about|find out (?:more|everything)|thorough(?:ly)?|comprehensive(?:ly)?)\b/.test(t)
-  );
+  return /\b(?:deep\s*(?:dive|research)|research\s+(?:the\s+)?(?:company|role|employer)|tell me (?:more|everything) about|find out (?:more|everything)|thorough(?:ly)?|comprehensive(?:ly)?)\b/i.test(text);
+}
+
+/**
+ * Extracts a concise, high-signal search query from the user's raw message.
+ * Looks for company names, job titles, and tech keywords before falling back
+ * to the trimmed raw text.
+ */
+function buildQueryFromMessage(text: string): string {
+  // Company name: capitalised words following "at", "for", "about", "research"
+  const company = text.match(
+    /\b(?:at|for|about|research(?:ing)?)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b/,
+  )?.[1];
+
+  // Explicit job title
+  const title = text.match(
+    /\b(software engineer|frontend|backend|full.?stack|data scientist|ml engineer|ai engineer|product manager|devops|cloud engineer|react developer|node developer|python developer|web developer)\b/i,
+  )?.[0];
+
+  // Tech stack keyword
+  const tech = text.match(
+    /\b(react|next\.?js|node\.?js|typescript|python|javascript|aws|gcp|azure|docker|kubernetes|llm|machine learning)\b/i,
+  )?.[0];
+
+  const remote = /\bremote\b/i.test(text) ? "remote" : "";
+  const parts = [company, title ?? tech, remote].filter(Boolean);
+
+  if (parts.length > 0) return parts.join(" ").trim().slice(0, 200);
+
+  // Fallback: strip filler words and use what remains
+  return text
+    .replace(/\b(?:please|can you|could you|i need|i want|help me|get me|show me|tell me)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
 }
 
 /**
@@ -102,7 +118,7 @@ export function formatWebSearchContext(hits: WebSearchHit[]): string {
   if (hits.length === 0) {
     return [
       "## Web search",
-      "No results were returned for this query. Say that briefly and do not invent URLs.",
+      "No results were returned for this query. Tell the user no live search results are available right now. Do NOT invent job listings, company names, or URLs. Direct them to search on LinkedIn (linkedin.com/jobs), Indeed (indeed.com), or Glassdoor (glassdoor.com) directly.",
     ].join("\n");
   }
 
@@ -119,50 +135,49 @@ export function formatWebSearchContext(hits: WebSearchHit[]): string {
   ].join("\n");
 }
 
-export async function decideWebSearchQuery(
-  model: LanguageModel,
+/**
+ * Decides whether to run a Brave web search and builds the query —
+ * using ONLY heuristics (zero LLM calls, zero neuron cost).
+ *
+ * The `model`, `abortSignal`, and `maxOutputTokens` parameters are kept
+ * for API compatibility but are intentionally unused.
+ */
+export function decideWebSearchQuery(
+  _model: LanguageModel,
   userMessage: string,
-  abortSignal: AbortSignal | undefined,
-  maxOutputTokens: number,
+  _abortSignal: AbortSignal | undefined,
+  _maxOutputTokens: number,
 ): Promise<{ needsSearch: boolean; query: string | undefined; query2: string | undefined }> {
   const text = userMessage.trim();
-  if (!text) return { needsSearch: false, query: undefined, query2: undefined };
+  if (!text) return Promise.resolve({ needsSearch: false, query: undefined, query2: undefined });
 
-  // If the message clearly asks for deep research, build a second complementary query
-  // without an extra LLM call — just augment the primary query with culture/news signals.
-  const isDeep = looksLikeDeepResearchRequest(text);
+  const needsSearch =
+    // Job finding
+    /\b(?:find|get|show|give|suggest|recommend|search\s+for)\b.{0,40}\b(?:job|jobs|role|roles|position|positions|opening|openings|work|opportunit)/i.test(text) ||
+    /\bjobs?\b.{0,30}\b(?:match|suit|fit|for me|my skills?|my level|my background)\b/i.test(text) ||
+    // Company / employer research
+    /\b(?:glassdoor|linkedin|indeed|crunchbase|levels\.fyi|blind)\b/i.test(text) ||
+    /\b(?:company|employer|startup|firm)\b.{0,30}\b(?:news|review|rating|culture|salary|funding|valuation)\b/i.test(text) ||
+    // Links, apply pages, careers
+    /\b(?:link|url|website|apply|careers?\s+page|job\s+board|apply\s+(?:for|to))\b/i.test(text) ||
+    // Salary / compensation data
+    /\b(?:salary|compensation|pay|hourly|annual|market\s+rate|pay\s+range)\b/i.test(text) ||
+    // Remote / hybrid jobs
+    /\b(?:remote|hybrid|on.?site)\s+(?:job|work|role|position|opportunit)\b/i.test(text) ||
+    // Recent / current info signals
+    /\b(?:latest|current|recent|2024|2025)\b.{0,20}\b(?:job|hire|hiring|role|opening)\b/i.test(text) ||
+    // Explicit search intent
+    /\b(?:search|look up|find out|look for|where can i|how do i find)\b/i.test(text);
 
-  try {
-    const { object } = await generateObject({
-      model,
-      maxOutputTokens,
-      schema: webSearchDecisionSchema,
-      system: `You route requests for a job-market research assistant.
-Set needsSearch to true when a live web lookup would materially help: user wants links or URLs, official company/careers/apply pages, job boards, verifying a website, Glassdoor/LinkedIn company pages, or current facts not in the chat.
-Set needsSearch to false when the answer can use only the conversation: pasted job text, resume tips, greetings, listing saved research, or generic interview advice without needing external pages.
-When needsSearch is true, set query to one short, high-signal web search query (keywords, not a long sentence).
-When the request is clearly asking for thorough company or role research (deep dive, research the company, find out everything), also set query2 to a complementary search that targets culture, news, or interview signals for the same company/role.`,
-      prompt: text.slice(0, 4000),
-      abortSignal,
-    });
-
-    const needsSearch = object.needsSearch;
-    let query = object.query?.trim();
-    let query2 = object.query2?.trim() || undefined;
-
-    if (needsSearch && !query) {
-      query = text.slice(0, 200).replace(/\s+/g, " ").trim();
-    }
-
-    // If heuristic detected deep research but LLM did not produce query2, build one cheaply
-    if (needsSearch && isDeep && !query2 && query) {
-      // Append culture/interview signal to create a complementary query
-      query2 = `${query.replace(/\s+site:\S+/g, "")} culture interview employee review`;
-    }
-
-    return { needsSearch, query: query || undefined, query2: query2 || undefined };
-  } catch (e) {
-    console.error("[decideWebSearchQuery]", e);
-    return { needsSearch: false, query: undefined, query2: undefined };
+  if (!needsSearch) {
+    return Promise.resolve({ needsSearch: false, query: undefined, query2: undefined });
   }
+
+  const query = buildQueryFromMessage(text);
+  const isDeep = looksLikeDeepResearchRequest(text);
+  const query2 = isDeep
+    ? `${query.replace(/\s+site:\S+/g, "")} culture interview employee review`
+    : undefined;
+
+  return Promise.resolve({ needsSearch: true, query, query2 });
 }
