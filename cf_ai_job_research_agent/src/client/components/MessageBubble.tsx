@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { Loader2, FileText, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
+import { useState } from "react";
+import { Loader2, FileText, ExternalLink } from "lucide-react";
 import { getToolName, isToolUIPart } from "ai";
 import { theme } from "../types";
 import type { UIMessage, JobAnalysis } from "../types";
@@ -195,31 +195,9 @@ interface MessageBubbleProps {
   stateDocContent?: string | null;
 }
 
-const TEXT_COLLAPSE_HEIGHT = 160;
 
 function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubbleProps) {
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
-  const [textExpanded, setTextExpanded] = useState(false);
-  const [needsCollapse, setNeedsCollapse] = useState(false);
-  const textContainerRef = useRef<HTMLDivElement>(null);
-
-  // Fingerprint that detects real content changes without relying on the parts
-  // array reference (which the AI SDK recreates on every streaming chunk).
-  const partsSig = (() => {
-    const parts = message.parts ?? [];
-    let textLen = 0;
-    for (const p of parts) {
-      const part = p as { type?: string; text?: string };
-      if (part.type === "text") textLen += (part.text ?? "").length;
-    }
-    const lastState = (parts[parts.length - 1] as { state?: string } | undefined)?.state ?? "";
-    return `${parts.length}:${textLen}:${lastState}`;
-  })();
-  useEffect(() => {
-    const el = textContainerRef.current;
-    if (!el) return;
-    setNeedsCollapse(el.scrollHeight > TEXT_COLLAPSE_HEIGHT + 40);
-  }, [partsSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   try {
     if (message.role === "user") {
@@ -509,8 +487,6 @@ function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubb
         }
       });
 
-      const showCollapse = needsCollapse && !textExpanded;
-
       return (
         <>
           {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
@@ -526,52 +502,7 @@ function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubb
           >
             {toolElements}
             {textElements.length > 0 && (
-              <div style={{ position: "relative" }}>
-                <div
-                  ref={textContainerRef}
-                  style={{
-                    maxHeight: showCollapse ? `${TEXT_COLLAPSE_HEIGHT}px` : undefined,
-                    overflow: showCollapse ? "hidden" : undefined,
-                  }}
-                >
-                  {textElements}
-                </div>
-                {showCollapse && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: "48px",
-                      background: "linear-gradient(transparent, #ffffff)",
-                      pointerEvents: "none",
-                    }}
-                  />
-                )}
-                {needsCollapse && (
-                  <button
-                    onClick={() => setTextExpanded((v) => !v)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      margin: "4px 0 0 14px",
-                      padding: "2px 8px",
-                      fontSize: theme.font.size.xs,
-                      color: theme.colors.textSecondary,
-                      fontFamily: theme.font.family,
-                      background: "none",
-                      border: `1px solid ${theme.colors.border}`,
-                      borderRadius: theme.radius.sm,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {textExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                    {textExpanded ? "Show less" : "Show more"}
-                  </button>
-                )}
-              </div>
+              <div>{textElements}</div>
             )}
           </div>
         </>

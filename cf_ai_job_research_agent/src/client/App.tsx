@@ -1,11 +1,71 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Flex, Box } from "@chakra-ui/react";
+import { X } from "lucide-react";
 import useJobAgent from "./hooks/useJobAgent";
+import { useIsMobile } from "./hooks/useMediaQuery";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import DocumentEditor from "./components/DocumentEditor";
 import { theme } from "./types";
 import type { ConversationMeta } from "./types";
+
+function MobileSidebarDrawer({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <>
+      <div className="mobile-drawer-backdrop" onClick={onClose} />
+      <div className="mobile-drawer-panel">{children}</div>
+    </>
+  );
+}
+
+function MobileDocOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="mobile-doc-overlay">
+      <div
+        style={{
+          height: "48px",
+          display: "flex",
+          alignItems: "center",
+          padding: "0 12px",
+          borderBottom: `1px solid ${theme.colors.border}`,
+          flexShrink: 0,
+        }}
+      >
+        <button
+          onClick={onClose}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "32px",
+            height: "32px",
+            borderRadius: "8px",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            color: theme.colors.text,
+          }}
+        >
+          <X size={18} />
+        </button>
+        <span
+          style={{
+            marginLeft: "8px",
+            fontSize: theme.font.size.md,
+            fontWeight: theme.font.weight.medium,
+            fontFamily: theme.font.family,
+            color: theme.colors.text,
+          }}
+        >
+          Document
+        </span>
+      </div>
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const CONVOS_KEY = "jra_conversations";
 const ACTIVE_KEY = "jra_active_session";
@@ -53,6 +113,8 @@ interface ChatSessionProps {
   activeDocumentContent: string | null;
   onUpdateActiveDocument: (content: string) => void;
   onUserSend: () => void;
+  isMobile?: boolean;
+  onOpenSidebar?: () => void;
 }
 
 function ChatSession({
@@ -70,6 +132,8 @@ function ChatSession({
   activeDocumentContent,
   onUpdateActiveDocument,
   onUserSend,
+  isMobile,
+  onOpenSidebar,
 }: ChatSessionProps) {
   const { messages, sendMessage, agentState, isStreaming } =
     useJobAgent(sessionId);
@@ -150,6 +214,8 @@ function ChatSession({
       onResumeExtracted={onResumeExtracted}
       onResumeRemove={onResumeRemove}
       pendingResumeFileName={pendingResume?.fileName}
+      isMobile={isMobile}
+      onOpenSidebar={onOpenSidebar}
     />
   );
 }
@@ -157,6 +223,9 @@ function ChatSession({
 // ─── Root App ────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const isMobile = useIsMobile();
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
   const [conversations, setConversations] = useState<ConversationMeta[]>(() => {
     const convos = loadConversations();
     if (convos.length > 0) return convos;
@@ -224,12 +293,14 @@ export default function App() {
     setActiveSessionId(id);
     setOpenDocuments([]);
     setActiveDocumentId(null);
+    setMobileDrawerOpen(false);
   }, []);
 
   const handleSelectConversation = useCallback((id: string) => {
     setActiveSessionId(id);
     setOpenDocuments([]);
     setActiveDocumentId(null);
+    setMobileDrawerOpen(false);
   }, []);
 
   const handleDeleteConversation = useCallback(
@@ -339,34 +410,57 @@ export default function App() {
     );
   }, []);
 
+  const handleCloseAllDocs = useCallback(() => {
+    setOpenDocuments([]);
+    setActiveDocumentId(null);
+  }, []);
+
   return (
     <Flex
       height="100vh"
       overflow="hidden"
       style={{
         background: "var(--color-viewport)",
-        padding: "14px",
-        gap: "12px",
+        padding: isMobile ? "0" : "14px",
+        gap: isMobile ? "0" : "12px",
         alignItems: "stretch",
       }}
     >
-      <Sidebar
-        conversations={conversations}
-        activeConversationId={activeSessionId}
-        onNewConversation={handleNewConversation}
-        onSelectConversation={handleSelectConversation}
-        onDeleteConversation={handleDeleteConversation}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((p) => !p)}
-      />
+      {/* Sidebar: inline on desktop, drawer overlay on mobile */}
+      {!isMobile && (
+        <Sidebar
+          conversations={conversations}
+          activeConversationId={activeSessionId}
+          onNewConversation={handleNewConversation}
+          onSelectConversation={handleSelectConversation}
+          onDeleteConversation={handleDeleteConversation}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((p) => !p)}
+        />
+      )}
+      {isMobile && mobileDrawerOpen && (
+        <MobileSidebarDrawer onClose={() => setMobileDrawerOpen(false)}>
+          <Sidebar
+            conversations={conversations}
+            activeConversationId={activeSessionId}
+            onNewConversation={handleNewConversation}
+            onSelectConversation={handleSelectConversation}
+            onDeleteConversation={handleDeleteConversation}
+            collapsed={false}
+            onToggleCollapse={() => setMobileDrawerOpen(false)}
+            inDrawer
+          />
+        </MobileSidebarDrawer>
+      )}
+
       <Box
         flex="1"
         overflow="hidden"
         display="flex"
         flexDirection="column"
         style={{
-          borderRadius: "16px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.08)",
+          borderRadius: isMobile ? "0" : "16px",
+          boxShadow: isMobile ? "none" : "0 8px 32px rgba(0,0,0,0.13), 0 4px 12px rgba(0,0,0,0.08)",
           background: theme.colors.background,
         }}
       >
@@ -386,16 +480,32 @@ export default function App() {
           activeDocumentContent={activeDocument?.content ?? null}
           onUpdateActiveDocument={handleUpdateActiveDocument}
           onUserSend={handleUserSend}
+          isMobile={isMobile}
+          onOpenSidebar={() => setMobileDrawerOpen(true)}
         />
       </Box>
+
+      {/* DocumentEditor: side panel on desktop, full-screen overlay on mobile */}
       {editorOpen && activeDocument && (
-        <DocumentEditor
-          openDocuments={openDocuments}
-          activeDocumentId={activeDocumentId!}
-          onCloseDocument={handleCloseDocument}
-          onSetActiveDocument={handleSetActiveDocument}
-          onUpdateContent={handleUpdateDocumentContent}
-        />
+        isMobile ? (
+          <MobileDocOverlay onClose={handleCloseAllDocs}>
+            <DocumentEditor
+              openDocuments={openDocuments}
+              activeDocumentId={activeDocumentId!}
+              onCloseDocument={handleCloseDocument}
+              onSetActiveDocument={handleSetActiveDocument}
+              onUpdateContent={handleUpdateDocumentContent}
+            />
+          </MobileDocOverlay>
+        ) : (
+          <DocumentEditor
+            openDocuments={openDocuments}
+            activeDocumentId={activeDocumentId!}
+            onCloseDocument={handleCloseDocument}
+            onSetActiveDocument={handleSetActiveDocument}
+            onUpdateContent={handleUpdateDocumentContent}
+          />
+        )
       )}
     </Flex>
   );

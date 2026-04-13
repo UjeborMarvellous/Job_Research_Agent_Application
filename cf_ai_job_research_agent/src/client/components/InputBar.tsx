@@ -10,6 +10,7 @@ interface InputBarProps {
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
   pendingResumeFileName?: string;
+  isMobile?: boolean;
 }
 
 export default function InputBar({
@@ -19,6 +20,7 @@ export default function InputBar({
   onResumeExtracted,
   onResumeRemove,
   pendingResumeFileName,
+  isMobile,
 }: InputBarProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
@@ -72,7 +74,7 @@ export default function InputBar({
     <div
       style={{
         flexShrink: 0,
-        padding: "10px 14px 14px",
+        padding: isMobile ? "8px 10px 10px" : "10px 14px 14px",
         display: "flex",
         flexDirection: "column",
         gap: "8px",

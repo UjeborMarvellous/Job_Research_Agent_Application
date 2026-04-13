@@ -18,6 +18,8 @@ interface SidebarProps {
   onDeleteConversation: (id: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  /** When true, disables border-radius/shadow (drawer container owns those). */
+  inDrawer?: boolean;
 }
 
 function formatDate(timestamp: string): string {
@@ -52,6 +54,7 @@ export default function Sidebar({
   onDeleteConversation,
   collapsed,
   onToggleCollapse,
+  inDrawer = false,
 }: SidebarProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const sortedConvos = [...conversations].sort(
@@ -116,13 +119,13 @@ export default function Sidebar({
   return (
     <div
       style={{
-        width: "260px",
+        width: inDrawer ? "100%" : "260px",
         height: "100%",
         display: "flex",
         flexDirection: "column",
         background: theme.colors.background,
-        borderRadius: "16px",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.11), 0 2px 8px rgba(0,0,0,0.07)",
+        borderRadius: inDrawer ? 0 : "16px",
+        boxShadow: inDrawer ? "none" : "0 8px 32px rgba(0,0,0,0.11), 0 2px 8px rgba(0,0,0,0.07)",
         flexShrink: 0,
         overflow: "hidden",
       }}

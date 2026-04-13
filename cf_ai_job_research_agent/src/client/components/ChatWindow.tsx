@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
-import { ScanSearch, AlertTriangle } from "lucide-react";
+import { ScanSearch, AlertTriangle, Menu } from "lucide-react";
 import { theme } from "../types";
 import type { UIMessage } from "../types";
 import MessageBubble from "./MessageBubble";
@@ -59,6 +59,8 @@ interface ChatWindowProps {
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
   pendingResumeFileName?: string;
+  isMobile?: boolean;
+  onOpenSidebar?: () => void;
 }
 
 export default function ChatWindow({
@@ -72,6 +74,8 @@ export default function ChatWindow({
   onResumeExtracted,
   onResumeRemove,
   pendingResumeFileName,
+  isMobile,
+  onOpenSidebar,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [stalled, setStalled] = useState(false);
@@ -115,7 +119,7 @@ export default function ChatWindow({
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 24px",
+          padding: isMobile ? "0 14px" : "0 24px",
           background: theme.colors.background,
           borderBottom: `1px solid ${theme.colors.border}`,
           flexShrink: 0,
@@ -123,6 +127,27 @@ export default function ChatWindow({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {isMobile && onOpenSidebar && (
+            <button
+              onClick={onOpenSidebar}
+              aria-label="Open sidebar"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "36px",
+                height: "36px",
+                borderRadius: "8px",
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                color: theme.colors.text,
+                flexShrink: 0,
+              }}
+            >
+              <Menu size={20} />
+            </button>
+          )}
           <IdentityMark size={15} containerSize={32} />
           <span style={{ fontFamily: theme.font.family }}>
             <span
@@ -149,7 +174,7 @@ export default function ChatWindow({
 
       {/* Message area */}
       <ScrollArea className="flex-1">
-        <div style={{ padding: "24px" }}>
+        <div style={{ padding: isMobile ? "14px" : "24px" }}>
           {messages.length === 0 ? (
             // ── Empty state ──────────────────────────────────────────────────
             <div
@@ -157,13 +182,13 @@ export default function ChatWindow({
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
-                paddingTop: "100px",
-                paddingBottom: "60px",
-                minHeight: "400px",
+                paddingTop: isMobile ? "40px" : "100px",
+                paddingBottom: isMobile ? "30px" : "60px",
+                minHeight: isMobile ? "200px" : "400px",
                 animation: "fadeSlideUp 250ms ease forwards",
               }}
             >
-              <IdentityMark size={28} containerSize={56} />
+              <IdentityMark size={isMobile ? 22 : 28} containerSize={isMobile ? 44 : 56} />
 
               <p
                 style={{
@@ -289,6 +314,7 @@ export default function ChatWindow({
         onResumeExtracted={onResumeExtracted}
         onResumeRemove={onResumeRemove}
         pendingResumeFileName={pendingResumeFileName}
+        isMobile={isMobile}
       />
     </div>
   );
