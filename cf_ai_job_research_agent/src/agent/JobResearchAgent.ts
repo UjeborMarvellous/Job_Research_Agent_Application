@@ -105,7 +105,11 @@ function looksLikeDocumentRequest(text: string): "cover-letter" | "email" | "cv-
 
 /** True when the message contains clear document-revision signals. */
 function looksLikeRevisionRequest(text: string): boolean {
-  return /\b(?:update|revise|change|edit|rewrite|fix|adjust|improve|modify|alter|make it|make the)\b/i.test(text);
+  return (
+    /\b(?:update|revise|change|edit|rewrite|fix|adjust|improve|modify|alter|make it|make the)\b/i.test(text) ||
+    /\b(?:shorten|shorter|condense|longer|expand|tone|formal|casual|punchier|tighten)\b/i.test(text) ||
+    /\b(?:polish|tweak|refine|reword|rephrase|simplify)\b/i.test(text)
+  );
 }
 
 /**
@@ -128,10 +132,9 @@ function findRawJobDescriptionInHistory(messages: UIMessage[]): string | null {
       .trim();
     // Skip resume-upload messages entirely — resume text isn't a JD
     if (/^\[resume-upload:/i.test(text)) continue;
-    const cleaned = text
-      .replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "")
-      .replace(/^\[view-entry:[^\]]+\]\s*/, "")
-      .trim();
+    const cleaned = stripForIntentClassification(
+      text.replace(/^\[view-entry:[^\]]+\]\s*/, "").trim(),
+    );
     if (looksLikeJobPosting(cleaned)) return cleaned;
   }
   return null;
@@ -285,6 +288,77 @@ function extractEditorContentTag(text: string): string | null {
   }
 }
 
+type EditorSessionMeta = {
+  open: boolean;
+  documentId: string | null;
+  title: string | null;
+};
+
+/** Strip leading [editor-session:base64] tag (URL-safe base64 from client). */
+function stripEditorSessionPrefix(text: string): string {
+  return text.replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+}
+
+/**
+ * Parse [editor-session:base64url-json] from the client (editor open + active doc).
+ * Returns null if absent or invalid.
+ */
+function extractEditorSessionMeta(text: string): EditorSessionMeta | null {
+  const m = text.match(/^\[editor-session:([A-Za-z0-9+/=]+)\]/);
+  if (!m) return null;
+  try {
+    const json = decodeURIComponent(escape(atob(m[1])));
+    const o = JSON.parse(json) as {
+      open?: boolean;
+      documentId?: string | null;
+      title?: string | null;
+    };
+    if (!o || typeof o.open !== "boolean") return null;
+    return {
+      open: o.open,
+      documentId: typeof o.documentId === "string" ? o.documentId : null,
+      title: typeof o.title === "string" ? o.title : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatEditorSessionForClassifier(meta: EditorSessionMeta | null): string {
+  if (!meta?.open) return "";
+  const id = meta.documentId?.trim() || "n/a";
+  const title = meta.title?.trim() || "Unknown document";
+  return `
+
+Client editor (live UI):
+- Editor is OPEN.
+- Active document title: "${title}".
+- Active document id (opaque client id): ${id}.
+
+When the editor is open and the user is clearly working on that document, prefer **update-document** for revisions, tone, length, or a fresh draft of the same document type — do NOT choose **generate-document** as if no document existed, unless they pasted a substantial new job description for a different tailored letter or explicitly want a separate new file for a different role.`;
+}
+
+function normalizeDocType(
+  t: string | undefined,
+): "cover-letter" | "email" | "cv-tips" {
+  if (t === "email" || t === "cv-tips") return t;
+  return "cover-letter";
+}
+
+/** Strip client-only tags for intent heuristics and classification. */
+function stripForIntentClassification(text: string): string {
+  let t = text.trim();
+  for (let i = 0; i < 6; i++) {
+    const next = t
+      .replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "")
+      .replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "")
+      .trim();
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
 const JOB_KEYWORDS = [
   "responsibilities",
   "qualifications",
@@ -384,6 +458,7 @@ async function classifyIntent(
   savedEntries: ResearchEntry[],
   hasGeneratedDocument: boolean,
   abortSignal: AbortSignal | undefined,
+  editorSessionNote: string,
 ): Promise<z.infer<typeof intentSchema>> {
   if (extractResumeUploadTag(lastUserText)) {
     return { intent: "chat" };
@@ -416,13 +491,14 @@ Saved research entries:
 ${savedSummary}
 
 Document status: A document HAS${hasGeneratedDocument ? "" : " NOT"} been generated in this conversation.
+${editorSessionNote}
 
 Classify the user's message into exactly one intent:
 - "analyze-job": the message IS or CONTAINS a substantial job posting/description (multi-line: responsibilities, requirements, role scope, company context). NOT for bare role-title lists or "give me the link" follow-ups.
 - "view-history": the user wants a list or summary of all their saved research.
 - "view-saved-entry": the user is asking to see a specific saved entry from the list above. If matched, also return its id in entryId.
-- "generate-document": the user is requesting a document be generated — a cover letter, email draft, or CV/resume improvement tips. If matched, also return documentType as "cover-letter", "email", or "cv-tips". This includes phrases like "write me a cover letter", "give me another cover letter", "draft a new version", "generate a cover letter with a different tone", "can you write a cover letter", "another cover letter please".
-- "update-document": the user is requesting edits or revisions to a previously generated document. Signals include words like update, revise, change, edit, rewrite, fix, adjust, improve the [document type]. Only classify as update-document if the document status above says a document HAS been generated. If no document exists, classify as generate-document.
+- "generate-document": the user wants a **brand-new** document and no suitable document exists yet, OR they pasted a substantial new job description and need a first tailored draft, OR they are switching to a different document type (e.g. first email draft) with the needed context.
+- "update-document": the user wants to change, refine, shorten, lengthen, re-tone, rewrite, polish, or replace the **existing** generated document still in scope (including phrases like "another cover letter", "new version", "different tone", "try again") **when a document already exists** and they did NOT just paste a completely new job description for a different role. Revision / iteration language (update, revise, edit, fix, improve, make it shorter, more formal, etc.) with an existing document is ALWAYS update-document.
 - "chat": follow-up questions, greetings, asking for URLs/careers/apply links, listing job titles without a full posting, or general conversation.
 
 Rules:
@@ -430,8 +506,9 @@ Rules:
 - If the user asks for links, URLs, careers pages, or where to apply — and did NOT paste a full job description — classify as "chat", not "analyze-job".
 - Do NOT classify full job postings as "chat" even if they contain words like "history" or "culture".
 - A real job posting usually includes: responsibilities, requirements, compensation, or detailed company/role description (not only a bullet list of titles).
-- Any request to write, draft, generate, or produce a cover letter, application email, or CV tips — even if phrased as "another one", "a new version", "a different tone" — MUST be "generate-document", never "chat".
-- Only use "update-document" when the user clearly wants to modify the existing document (update, revise, change, edit, rewrite, fix, adjust, improve) and a document already exists.`,
+- CRITICAL: If Document status says a document HAS been generated, and the user asks for another cover letter / new version / different tone / try again **without** a new full job description in the message, classify as **update-document** with documentType "cover-letter", NOT generate-document.
+- If the client editor note says the editor is OPEN and the request is about the current letter/document, prefer **update-document** over **generate-document**.
+- Only use "generate-document" for a first-time document request, or when job context + resume clearly warrant a new full draft (e.g. after a new JD is provided).`,
       prompt: lastUserText,
       abortSignal,
     });
@@ -665,6 +742,7 @@ function provisionalSidebarTitleFromUserText(text: string): string {
   if (!body) return "";
   let t = body;
   t = t.replace(/^\[view-entry:[^\]]+\]\s*/i, "").trim();
+  t = t.replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "").trim();
   t = t.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
   if (!t) return "";
   const words = t.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
@@ -766,13 +844,18 @@ Rules:
     const model = workersai("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
     const abortSignal = options?.abortSignal;
     const uiMessages = this.messages as UIMessage[];
-    let lastUser = getLastUserText(uiMessages);
-
+    const rawLastUser = getLastUserText(uiMessages);
+    const editorSessionMeta = extractEditorSessionMeta(rawLastUser);
+    let lastUser = rawLastUser;
+    if (editorSessionMeta) {
+      lastUser = stripEditorSessionPrefix(lastUser);
+    }
     // Extract and strip the [editor-content:...] tag before any LLM sees it
     const liveEditorContent = extractEditorContentTag(lastUser);
     if (liveEditorContent !== null) {
-      lastUser = lastUser.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "");
+      lastUser = lastUser.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
     }
+    const editorSessionNote = formatEditorSessionForClassifier(editorSessionMeta);
 
     const modelMessages = await convertToModelMessages(
       stripUiToolPartsForLlm(uiMessages),
@@ -872,7 +955,7 @@ Rules:
     }
 
     // ── Orchestrated turn: classify + intent branches in one UI stream ────────
-    const textToClassify = tagIntentText ?? lastUser;
+    const textToClassify = stripForIntentClassification(tagIntentText ?? lastUser);
     const stream = createUIMessageStream({
       originalMessages: uiMessages,
       execute: async ({ writer }) => {
@@ -916,7 +999,25 @@ Rules:
                 } else {
                   const docRequestType = looksLikeDocumentRequest(textToClassify);
                   const hasRawJdInHistory = !hasJobContext && findRawJobDescriptionInHistory(uiMessages) !== null;
-                  if (
+                  const lastDocMeta = getLastGeneratedDocument(uiMessages);
+
+                  if (hasGeneratedDocument && looksLikeRevisionRequest(textToClassify) && hasResume) {
+                    const dtype = normalizeDocType(
+                      docRequestType ?? lastDocMeta?.documentType,
+                    );
+                    classified = { intent: "update-document" as const, documentType: dtype };
+                  } else if (
+                    docRequestType === "cover-letter" &&
+                    hasResume &&
+                    !hasJobContext &&
+                    !hasRawJdInHistory &&
+                    hasGeneratedDocument
+                  ) {
+                    classified = {
+                      intent: "update-document" as const,
+                      documentType: "cover-letter" as const,
+                    };
+                  } else if (
                     docRequestType === "cover-letter" &&
                     hasResume &&
                     !hasJobContext &&
@@ -939,6 +1040,7 @@ Rules:
                       savedEntries,
                       hasGeneratedDocument,
                       abortSignal,
+                      editorSessionNote,
                     );
                   }
                 }
@@ -1490,7 +1592,11 @@ The user can paste a job description to get a detailed analysis. They currently 
               type: "tool-input-available",
               toolCallId: updateToolId,
               toolName: "generateDocument",
-              input: { documentType: existingDoc.documentType, title: existingDoc.title },
+              input: {
+                documentType: existingDoc.documentType,
+                title: existingDoc.title,
+                documentRevision: true,
+              },
               providerExecuted: true,
             });
 

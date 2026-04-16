@@ -6,6 +6,7 @@ import type { UIMessage, JobAnalysis } from "../types";
 import AgentStepRow from "./AgentStepRow";
 import ResearchCard from "./ResearchCard";
 import { Button } from "./ui/button";
+import { stripUserMessageTagsForDisplay } from "../utils/userMessageComposerText";
 
 // ─── URL chip helpers ─────────────────────────────────────────────────────────
 
@@ -279,9 +280,9 @@ function MessageBubble({
         // Only show the user's typed intent, not the full resume body
         const rawPayload = resumeMatch[2].trim();
         const delimIdx = rawPayload.indexOf("---USER_INTENT---");
-        const remainingText = delimIdx >= 0
-          ? rawPayload.slice(delimIdx + "---USER_INTENT---".length).trim()
-          : "";
+        const remainingTextRaw =
+          delimIdx >= 0 ? rawPayload.slice(delimIdx + "---USER_INTENT---".length).trim() : "";
+        const remainingText = stripUserMessageTagsForDisplay(remainingTextRaw);
         return (
           <>
             {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
@@ -361,6 +362,8 @@ function MessageBubble({
 
       if (text.startsWith("[view-entry:")) return null;
 
+      const displayText = stripUserMessageTagsForDisplay(text);
+
       return (
         <>
           {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
@@ -395,7 +398,7 @@ function MessageBubble({
                   whiteSpace: "pre-wrap",
                 }}
               >
-                <TextWithLinks text={text} color="#ffffff" onLinkClick={setActiveUrl} />
+                <TextWithLinks text={displayText} color="#ffffff" onLinkClick={setActiveUrl} />
               </p>
             </div>
             {userEditBtn}
@@ -512,63 +515,115 @@ function MessageBubble({
 
         if (isToolUIPart(aiPart) && getToolName(aiPart) === "generateDocument") {
           if (aiPart.state === "output-available") {
-            const input = aiPart.input as { title?: string; documentType?: string };
+            const input = aiPart.input as {
+              title?: string;
+              documentType?: string;
+              documentRevision?: boolean;
+            };
             const output = aiPart.output as { content?: string; format?: string };
             const title = input?.title ?? "Document";
             const content = stateDocContent ?? output?.content ?? "";
+            const isRevision = input?.documentRevision === true;
 
-            toolElements.push(
-              <div
-                key={`d-${index}`}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  padding: "10px 14px",
-                  marginTop: "8px",
-                  background: theme.colors.surface,
-                  border: `1px solid ${theme.colors.border}`,
-                  borderRadius: theme.radius.md,
-                }}
-              >
-                <FileText size={16} color={theme.colors.textSecondary} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p
-                    style={{
-                      fontSize: theme.font.size.base,
-                      fontWeight: theme.font.weight.semibold,
-                      color: theme.colors.text,
-                      fontFamily: theme.font.family,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {title}
-                  </p>
-                  <p style={{ fontSize: theme.font.size.xs, color: theme.colors.textMuted, fontFamily: theme.font.family, marginTop: "2px" }}>
-                    Ready to edit and export
-                  </p>
-                </div>
-                {onOpenDocument && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => onOpenDocument({ title, content })}
-                    className="gap-1.5 shrink-0"
-                  >
-                    <ExternalLink size={11} />
-                    Open in Editor
-                  </Button>
-                )}
-              </div>,
-            );
+            if (isRevision) {
+              toolElements.push(
+                <div
+                  key={`d-${index}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "8px 12px",
+                    marginTop: "8px",
+                    background: theme.colors.surface,
+                    border: `1px solid ${theme.colors.border}`,
+                    borderRadius: theme.radius.md,
+                  }}
+                >
+                  <FileText size={15} color={theme.colors.success} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p
+                      style={{
+                        fontSize: theme.font.size.sm,
+                        fontWeight: theme.font.weight.semibold,
+                        color: theme.colors.text,
+                        fontFamily: theme.font.family,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {title}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: theme.font.size.xs,
+                        color: theme.colors.textSecondary,
+                        fontFamily: theme.font.family,
+                        marginTop: "2px",
+                      }}
+                    >
+                      Revised in your open editor
+                    </p>
+                  </div>
+                </div>,
+              );
+            } else {
+              toolElements.push(
+                <div
+                  key={`d-${index}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "10px 14px",
+                    marginTop: "8px",
+                    background: theme.colors.surface,
+                    border: `1px solid ${theme.colors.border}`,
+                    borderRadius: theme.radius.md,
+                  }}
+                >
+                  <FileText size={16} color={theme.colors.textSecondary} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p
+                      style={{
+                        fontSize: theme.font.size.base,
+                        fontWeight: theme.font.weight.semibold,
+                        color: theme.colors.text,
+                        fontFamily: theme.font.family,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {title}
+                    </p>
+                    <p style={{ fontSize: theme.font.size.xs, color: theme.colors.textMuted, fontFamily: theme.font.family, marginTop: "2px" }}>
+                      Ready to edit and export
+                    </p>
+                  </div>
+                  {onOpenDocument && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => onOpenDocument({ title, content })}
+                      className="gap-1.5 shrink-0"
+                    >
+                      <ExternalLink size={11} />
+                      Open in Editor
+                    </Button>
+                  )}
+                </div>,
+              );
+            }
           } else if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
+            const input = aiPart.input as { documentRevision?: boolean };
+            const isRevision = input?.documentRevision === true;
             toolElements.push(
               <div key={`dl-${index}`} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}>
                 <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
                 <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
-                  Generating document...
+                  {isRevision ? "Applying revisions…" : "Generating document..."}
                 </span>
               </div>,
             );
