@@ -6,6 +6,7 @@ import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import InputBar from "./InputBar";
 import { ScrollArea } from "./ui/scroll-area";
+import { getUserMessagePlainTextForComposer } from "../utils/userMessageComposerText";
 
 /** No progress for this long while streaming → show gentle notice (job analysis can be 30–60s+). */
 const STALL_TIMEOUT_MS = 90_000;
@@ -59,6 +60,11 @@ interface ChatWindowProps {
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
   pendingResumeFileName?: string;
+  /** When set, InputBar loads this text once (e.g. edit-message flow). */
+  composerSeed?: { text: string; nonce: number } | null;
+  onComposerSeedConsumed?: () => void;
+  /** Truncate history at index and send to regenerate from an edited user message. */
+  onBeginEditUserMessage?: (messageIndex: number) => void;
   isMobile?: boolean;
   onOpenSidebar?: () => void;
 }
@@ -74,6 +80,9 @@ export default function ChatWindow({
   onResumeExtracted,
   onResumeRemove,
   pendingResumeFileName,
+  composerSeed,
+  onComposerSeedConsumed,
+  onBeginEditUserMessage,
   isMobile,
   onOpenSidebar,
 }: ChatWindowProps) {
@@ -238,12 +247,19 @@ export default function ChatWindow({
                 // means older "Open in Editor" buttons silently reference the
                 // newest document instead of the one they generated.
                 const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id ?? null;
-                return messages.map((msg) => (
+                return messages.map((msg, index) => (
                   <MessageBubble
                     key={msg.id}
                     message={msg}
+                    messageIndex={index}
                     onOpenDocument={onOpenDocument}
                     stateDocContent={msg.id === lastAssistantId ? stateDocContent : null}
+                    canEditUserMessage={
+                      msg.role === "user" &&
+                      !!onBeginEditUserMessage &&
+                      getUserMessagePlainTextForComposer(msg) !== null
+                    }
+                    onEditUserMessage={onBeginEditUserMessage}
                   />
                 ));
               })()}
@@ -314,6 +330,8 @@ export default function ChatWindow({
         onResumeExtracted={onResumeExtracted}
         onResumeRemove={onResumeRemove}
         pendingResumeFileName={pendingResumeFileName}
+        composerSeed={composerSeed}
+        onComposerSeedConsumed={onComposerSeedConsumed}
         isMobile={isMobile}
       />
     </div>

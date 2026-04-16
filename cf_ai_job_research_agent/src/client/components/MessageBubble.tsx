@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, FileText, ExternalLink } from "lucide-react";
+import { Loader2, FileText, ExternalLink, Pencil, Copy, Check } from "lucide-react";
 import { getToolName, isToolUIPart } from "ai";
 import { theme } from "../types";
 import type { UIMessage, JobAnalysis } from "../types";
@@ -190,14 +190,80 @@ function looksLikeRawFunctionCallJson(text: string): boolean {
 
 interface MessageBubbleProps {
   message: UIMessage;
+  messageIndex?: number;
   onOpenDocument?: (doc: { title: string; content: string }) => void;
   /** Full document from DO state — used instead of (possibly truncated) message part content. */
   stateDocContent?: string | null;
+  canEditUserMessage?: boolean;
+  onEditUserMessage?: (messageIndex: number) => void;
 }
 
+function assistantMessagePlainText(message: UIMessage): string {
+  const parts = message.parts ?? [];
+  const chunks: string[] = [];
+  for (const p of parts) {
+    if (p.type === "text" && typeof (p as { text?: string }).text === "string") {
+      const t = (p as { text: string }).text.trim();
+      if (t) chunks.push((p as { text: string }).text);
+    }
+  }
+  return chunks.join("\n\n");
+}
 
-function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubbleProps) {
+function MessageBubble({
+  message,
+  messageIndex,
+  onOpenDocument,
+  stateDocContent,
+  canEditUserMessage,
+  onEditUserMessage,
+}: MessageBubbleProps) {
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
+  const [userRowHover, setUserRowHover] = useState(false);
+  const [assistantRowHover, setAssistantRowHover] = useState(false);
+  const [copiedAssistant, setCopiedAssistant] = useState(false);
+
+  const showUserEdit =
+    canEditUserMessage &&
+    messageIndex !== undefined &&
+    typeof onEditUserMessage === "function";
+
+  const userEditBtn = showUserEdit ? (
+    <button
+      type="button"
+      onClick={() => onEditUserMessage!(messageIndex!)}
+      title="Edit message"
+      aria-label="Edit message"
+      style={{
+        alignSelf: "flex-start",
+        marginTop: "8px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "28px",
+        height: "28px",
+        borderRadius: "8px",
+        border: "none",
+        background: userRowHover ? theme.colors.surfaceElevated : "transparent",
+        cursor: "pointer",
+        flexShrink: 0,
+        color: theme.colors.textMuted,
+        opacity: userRowHover ? 1 : 0,
+        transition: "opacity 120ms ease, background 120ms ease",
+      }}
+    >
+      <Pencil size={14} />
+    </button>
+  ) : null;
+
+  const handleCopyAssistant = () => {
+    const t = assistantMessagePlainText(message);
+    if (!t) return;
+    void navigator.clipboard.writeText(t).then(() => {
+      setCopiedAssistant(true);
+      setTimeout(() => setCopiedAssistant(false), 2000);
+    });
+  };
 
   try {
     if (message.role === "user") {
@@ -221,59 +287,73 @@ function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubb
             {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
             <div
               className="mount-anim"
-              style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", margin: "3px 0", gap: "4px" }}
+              onMouseEnter={() => setUserRowHover(true)}
+              onMouseLeave={() => setUserRowHover(false)}
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "flex-start",
+                justifyContent: "flex-end",
+                gap: "4px",
+                margin: "3px 0",
+              }}
             >
               <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 12px",
-                  background: theme.colors.text,
-                  borderRadius: "18px",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                  maxWidth: "68%",
-                }}
+                style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}
               >
-                <FileText size={13} color="#ffffff" style={{ flexShrink: 0 }} />
-                <span
-                  style={{
-                    fontSize: theme.font.size.sm,
-                    color: "#ffffff",
-                    fontFamily: theme.font.family,
-                    fontWeight: theme.font.weight.medium,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    maxWidth: "220px",
-                  }}
-                >
-                  {fileName}
-                </span>
-              </div>
-              {remainingText && (
                 <div
                   style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "7px 12px",
                     background: theme.colors.text,
                     borderRadius: "18px",
-                    padding: "10px 16px",
-                    maxWidth: "68%",
                     boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                    maxWidth: "68%",
                   }}
                 >
-                  <p
+                  <FileText size={13} color="#ffffff" style={{ flexShrink: 0 }} />
+                  <span
                     style={{
-                      fontSize: theme.font.size.base,
+                      fontSize: theme.font.size.sm,
                       color: "#ffffff",
-                      lineHeight: String(theme.font.lineHeight.relaxed),
                       fontFamily: theme.font.family,
-                      whiteSpace: "pre-wrap",
+                      fontWeight: theme.font.weight.medium,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "220px",
                     }}
                   >
-                    <TextWithLinks text={remainingText} color="#ffffff" onLinkClick={setActiveUrl} />
-                  </p>
+                    {fileName}
+                  </span>
                 </div>
-              )}
+                {remainingText && (
+                  <div
+                    style={{
+                      background: theme.colors.text,
+                      borderRadius: "18px",
+                      padding: "10px 16px",
+                      maxWidth: "68%",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: theme.font.size.base,
+                        color: "#ffffff",
+                        lineHeight: String(theme.font.lineHeight.relaxed),
+                        fontFamily: theme.font.family,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      <TextWithLinks text={remainingText} color="#ffffff" onLinkClick={setActiveUrl} />
+                    </p>
+                  </div>
+                )}
+              </div>
+              {userEditBtn}
             </div>
           </>
         );
@@ -286,7 +366,16 @@ function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubb
           {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
           <div
             className="mount-anim"
-            style={{ display: "flex", justifyContent: "flex-end", margin: "3px 0" }}
+            onMouseEnter={() => setUserRowHover(true)}
+            onMouseLeave={() => setUserRowHover(false)}
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "flex-start",
+              justifyContent: "flex-end",
+              gap: "4px",
+              margin: "3px 0",
+            }}
           >
             <div
               style={{
@@ -309,6 +398,7 @@ function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubb
                 <TextWithLinks text={text} color="#ffffff" onLinkClick={setActiveUrl} />
               </p>
             </div>
+            {userEditBtn}
           </div>
         </>
       );
@@ -487,19 +577,56 @@ function MessageBubble({ message, onOpenDocument, stateDocContent }: MessageBubb
         }
       });
 
+      const assistantText = assistantMessagePlainText(message);
+      const showAssistantCopy = assistantText.trim().length > 0;
+
       return (
         <>
           {activeUrl && <LinkModal url={activeUrl} onClose={() => setActiveUrl(null)} />}
           <div
             className="mount-anim"
+            onMouseEnter={() => setAssistantRowHover(true)}
+            onMouseLeave={() => setAssistantRowHover(false)}
             style={{
+              position: "relative",
               display: "flex",
               justifyContent: "flex-start",
               margin: "3px 0",
               maxWidth: "82%",
               flexDirection: "column",
+              paddingRight: showAssistantCopy ? "36px" : "0",
             }}
           >
+            {showAssistantCopy && (
+              <button
+                type="button"
+                onClick={handleCopyAssistant}
+                title="Copy reply"
+                aria-label="Copy assistant reply"
+                style={{
+                  position: "absolute",
+                  top: "0",
+                  right: "0",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "8px",
+                  border: "none",
+                  background:
+                    assistantRowHover || copiedAssistant
+                      ? theme.colors.surfaceElevated
+                      : "transparent",
+                  cursor: "pointer",
+                  color: copiedAssistant ? theme.colors.success : theme.colors.textMuted,
+                  opacity: assistantRowHover || copiedAssistant ? 1 : 0.35,
+                  transition: "opacity 120ms ease, background 120ms ease, color 120ms ease",
+                }}
+              >
+                {copiedAssistant ? <Check size={15} strokeWidth={2.5} /> : <Copy size={15} />}
+              </button>
+            )}
             {toolElements}
             {textElements.length > 0 && (
               <div>{textElements}</div>

@@ -23,6 +23,7 @@ import {
   FileType,
   Loader2,
   CheckCircle2,
+  Copy,
 } from "lucide-react";
 import { theme } from "../types";
 import { exportAsPdf, exportAsDocx, exportAsTxt } from "../utils/exportDocument";
@@ -138,6 +139,17 @@ export default function DocumentEditor({
   }, [activeDocumentId, activeDoc?.content]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [exporting, setExporting] = useState<string | null>(null);
+  const [copiedDoc, setCopiedDoc] = useState(false);
+
+  const handleCopyDocument = useCallback(() => {
+    if (!editor) return;
+    const text = editor.getText().trim();
+    if (!text) return;
+    void navigator.clipboard.writeText(editor.getText()).then(() => {
+      setCopiedDoc(true);
+      setTimeout(() => setCopiedDoc(false), 2000);
+    });
+  }, [editor]);
 
   const handleExport = useCallback(
     async (format: "pdf" | "docx" | "txt") => {
@@ -366,6 +378,15 @@ export default function DocumentEditor({
         </ToolbarBtn>
         <ToolbarBtn onClick={() => editor.chain().focus().setTextAlign("right").run()} active={editor.isActive({ textAlign: "right" })} title="Align right">
           <AlignRight size={13} />
+        </ToolbarBtn>
+
+        <div style={{ width: "1px", height: "18px", background: theme.colors.border, margin: "0 4px", flexShrink: 0 }} />
+
+        <ToolbarBtn
+          onClick={handleCopyDocument}
+          title={copiedDoc ? "Copied" : "Copy document text"}
+        >
+          <Copy size={13} />
         </ToolbarBtn>
       </div>
 

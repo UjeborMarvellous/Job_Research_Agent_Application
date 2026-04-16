@@ -11,6 +11,7 @@ import {
   isToolUIPart,
   type LanguageModel,
   type UIMessage,
+  type UIMessageStreamWriter,
 } from "ai";
 import { z } from "zod";
 import type { AgentState, ResearchEntry } from "../client/types";
@@ -71,6 +72,14 @@ const OUT = {
 function docMaxOutputTokens(docType: string): number {
   return docType === "cv-tips" ? 3072 : 2048;
 }
+
+/** Shown in chat when a generic cover letter is placed in the editor (exact wording). */
+const GENERIC_COVER_ASSISTANT_REPLY =
+  "Here's a generic cover letter in the editor. For a personalized version, paste the Job Description or a link here.";
+
+/** Shown after the user pastes a JD and the editor is updated with a tailored letter. */
+const PERSONALIZED_COVER_AFTER_JD_REPLY =
+  "I've updated your cover letter in the editor for this role. Review the research card above for details.";
 
 /**
  * Truncate a string to maxChars, appending "..." if cut.
@@ -556,6 +565,76 @@ const sidebarTitleSchema = z.object({
 
 type ChatOnFinish = Parameters<AIChatAgent<Env, AgentState>["onChatMessage"]>[0];
 
+async function produceHtmlDocumentWithRetry(
+  model: LanguageModel,
+  system: string,
+  userLine: string,
+  docTokenCap: number,
+  abortSignal: AbortSignal | undefined,
+): Promise<string> {
+  const runOnce = () =>
+    streamText({
+      model,
+      maxOutputTokens: docTokenCap,
+      system,
+      messages: [{ role: "user", content: userLine }],
+      abortSignal,
+    });
+  try {
+    const result = runOnce();
+    const chunks: string[] = [];
+    for await (const chunk of result.textStream) {
+      chunks.push(chunk);
+    }
+    const fullContent = chunks.join("");
+    const reason = await result.finishReason;
+    if (reason === "length") {
+      console.warn(`[produceHtmlDocumentWithRetry] truncated at cap=${docTokenCap}`);
+    }
+    return fullContent;
+  } catch (docErr) {
+    if (isRateLimitError(docErr)) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const retry = runOnce();
+      const retryChunks: string[] = [];
+      for await (const chunk of retry.textStream) {
+        retryChunks.push(chunk);
+      }
+      const fullContent = retryChunks.join("");
+      const retryReason = await retry.finishReason;
+      if (retryReason === "length") {
+        console.warn(`[produceHtmlDocumentWithRetry] retry truncated at cap=${docTokenCap}`);
+      }
+      return fullContent;
+    }
+    throw docErr;
+  }
+}
+
+async function streamAssistantEchoLine(
+  writer: UIMessageStreamWriter,
+  model: LanguageModel,
+  exactLine: string,
+  onFinish: ChatOnFinish,
+  abortSignal: AbortSignal | undefined,
+): Promise<void> {
+  const stepId = beginAgentStep(writer, "Writing reply");
+  const st = streamText({
+    model,
+    temperature: 0,
+    maxOutputTokens: Math.min(512, exactLine.length + 80),
+    system:
+      "You are a copy relay. Output ONLY the exact text in the user message on the next line. No quotes, no preamble, no markdown, no extra words, no line breaks before or after.",
+    messages: [{ role: "user", content: exactLine }],
+    abortSignal,
+    onFinish: async (evt) => {
+      endAgentStep(writer, stepId, true);
+      await onFinish(evt);
+    },
+  });
+  writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+}
+
 function clipSidebarTitle(s: string, max = 55): string {
   const t = s.replace(/\s+/g, " ").trim();
   if (!t) return "";
@@ -601,6 +680,7 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     resumeFileName: undefined,
     sidebarTitle: undefined,
     sidebarTitleFinalized: false,
+    awaitingPersonalizedCoverLetter: false,
   };
 
   private async persistSidebarTitle(title: string): Promise<void> {
@@ -836,7 +916,17 @@ Rules:
                 } else {
                   const docRequestType = looksLikeDocumentRequest(textToClassify);
                   const hasRawJdInHistory = !hasJobContext && findRawJobDescriptionInHistory(uiMessages) !== null;
-                  if (docRequestType && (hasJobContext || hasRawJdInHistory) && hasResume) {
+                  if (
+                    docRequestType === "cover-letter" &&
+                    hasResume &&
+                    !hasJobContext &&
+                    !hasRawJdInHistory
+                  ) {
+                    classified = {
+                      intent: "generate-document" as const,
+                      documentType: "cover-letter" as const,
+                    };
+                  } else if (docRequestType && (hasJobContext || hasRawJdInHistory) && hasResume) {
                     if (hasGeneratedDocument && looksLikeRevisionRequest(textToClassify)) {
                       classified = { intent: "update-document" as const, documentType: docRequestType };
                     } else {
@@ -1139,20 +1229,100 @@ The user can paste a job description to get a detailed analysis. They currently 
               writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
               return;
             }
-            // Gate: need some form of job context (structured OR raw JD from history)
+            const docTypeEarly = documentType ?? "cover-letter";
+            // Gate: need job context — except we allow a generic cover letter from resume alone
             if (!hasAnyJobContext) {
-              const gateStep = beginAgentStep(writer, "Writing reply");
-              const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
-              const st = streamText({
-                model,
-                temperature: 0.7,
-                maxOutputTokens: OUT.streamShort,
-                system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
-                messages: [{ role: "user", content: "Please paste a job description first so I can tailor the document to the role. The user has a resume but no job description yet." }],
-                abortSignal,
-                onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
+              if (docTypeEarly !== "cover-letter") {
+                const gateStep = beginAgentStep(writer, "Writing reply");
+                const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
+                const st = streamText({
+                  model,
+                  temperature: 0.7,
+                  maxOutputTokens: OUT.streamShort,
+                  system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
+                  messages: [
+                    {
+                      role: "user",
+                      content:
+                        "Please paste a job description first so I can tailor the document to the role. The user has a resume but no job description yet.",
+                    },
+                  ],
+                  abortSignal,
+                  onFinish: async (evt) => {
+                    endAgentStep(writer, gateStep, true);
+                    await wrappedFinish(evt);
+                  },
+                });
+                writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+                return;
+              }
+
+              await runAgentStep(writer, "Drafting generic cover letter", async () => {
+                await Promise.resolve();
               });
-              writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+              const genericTitle = "Cover Letter (generic)";
+              const genericSystem = `You are a professional cover letter writer. The user has not provided a specific job posting yet. Write a polished, adaptable cover letter using only their resume information. Do not invent an employer name or role title; keep references general (for example "the role", "your team", or "this opportunity"). Output the letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML. ${NO_HREF_RULE}`;
+              const resumeContextGeneric = `\n\nCandidate's Resume:\n${capStr(resumeText, 3000)}`;
+              const genericTokenCap = docMaxOutputTokens("cover-letter");
+              const genericHtml = await produceHtmlDocumentWithRetry(
+                model,
+                `${genericSystem}\n\nResume Context:${resumeContextGeneric}`,
+                "Generate the Cover Letter.",
+                genericTokenCap,
+                abortSignal,
+              );
+
+              const genToolId = crypto.randomUUID();
+              writer.write({
+                type: "tool-input-start",
+                toolCallId: genToolId,
+                toolName: "generateDocument",
+                providerExecuted: true,
+              });
+              writer.write({
+                type: "tool-input-available",
+                toolCallId: genToolId,
+                toolName: "generateDocument",
+                input: { documentType: "cover-letter", title: genericTitle },
+                providerExecuted: true,
+              });
+
+              await this.persistSidebarTitle(genericTitle);
+              try {
+                await this.setState({
+                  ...this.state,
+                  lastGeneratedDocument: {
+                    title: genericTitle,
+                    content: genericHtml,
+                    documentType: "cover-letter",
+                  },
+                  awaitingPersonalizedCoverLetter: true,
+                });
+              } catch (e) {
+                console.error("persist lastGeneratedDocument (generic):", e);
+              }
+
+              writer.write({
+                type: "tool-output-available",
+                toolCallId: genToolId,
+                output: { content: genericHtml, format: "html" },
+                providerExecuted: true,
+              });
+
+              const wrappedFinishGeneric = this.withSidebarTitleAfterStream(
+                onFinish,
+                model,
+                lastUser,
+                "Generic cover letter",
+                abortSignal,
+              );
+              await streamAssistantEchoLine(
+                writer,
+                model,
+                GENERIC_COVER_ASSISTANT_REPLY,
+                wrappedFinishGeneric,
+                abortSignal,
+              );
               return;
             }
 
@@ -1213,47 +1383,13 @@ The user can paste a job description to get a detailed analysis. They currently 
 
             const docSystem = `${systemPrompts[docType] ?? systemPrompts["cover-letter"]}\n\nJob Context:\n${jobContext}${resumeContext}`;
             const docTokenCap = docMaxOutputTokens(docType);
-            let fullContent = "";
-            try {
-              const result = streamText({
-                model,
-                maxOutputTokens: docTokenCap,
-                system: docSystem,
-                messages: [{ role: "user", content: `Generate the ${docLabel}.` }],
-                abortSignal,
-              });
-              const chunks: string[] = [];
-              for await (const chunk of result.textStream) {
-                chunks.push(chunk);
-              }
-              fullContent = chunks.join("");
-              const reason = await result.finishReason;
-              if (reason === "length") {
-                console.warn(`[generateDocument] output truncated at token limit — docType=${docType} cap=${docTokenCap}`);
-              }
-            } catch (docErr) {
-              if (isRateLimitError(docErr)) {
-                await new Promise((r) => setTimeout(r, 4000));
-                const retry = streamText({
-                  model,
-                  maxOutputTokens: docTokenCap,
-                  system: docSystem,
-                  messages: [{ role: "user", content: `Generate the ${docLabel}.` }],
-                  abortSignal,
-                });
-                const retryChunks: string[] = [];
-                for await (const chunk of retry.textStream) {
-                  retryChunks.push(chunk);
-                }
-                fullContent = retryChunks.join("");
-                const retryReason = await retry.finishReason;
-                if (retryReason === "length") {
-                  console.warn(`[generateDocument] retry output truncated — docType=${docType} cap=${docTokenCap}`);
-                }
-              } else {
-                throw docErr;
-              }
-            }
+            const fullContent = await produceHtmlDocumentWithRetry(
+              model,
+              docSystem,
+              `Generate the ${docLabel}.`,
+              docTokenCap,
+              abortSignal,
+            );
 
             await this.persistSidebarTitle(docTitle);
 
@@ -1263,6 +1399,7 @@ The user can paste a job description to get a detailed analysis. They currently 
               await this.setState({
                 ...this.state,
                 lastGeneratedDocument: { title: docTitle, content: fullContent, documentType: docType },
+                awaitingPersonalizedCoverLetter: false,
               });
             } catch (e) {
               console.error("persist lastGeneratedDocument:", e);
@@ -1426,6 +1563,7 @@ The user can paste a job description to get a detailed analysis. They currently 
                   content: revisedContent,
                   documentType: existingDoc.documentType,
                 },
+                awaitingPersonalizedCoverLetter: false,
               });
             } catch (e) {
               console.error("persist revised lastGeneratedDocument:", e);
@@ -1557,6 +1695,9 @@ Rules:
             return;
           }
 
+          const wasAwaitingCover = (this.state as AgentState).awaitingPersonalizedCoverLetter === true;
+          const resumeSnapshotForPersonalize = (this.state as AgentState)?.resumeText ?? "";
+
           const saveId = beginAgentStep(writer, "Saving to your research");
           try {
             const current = (this.state?.researches ?? []) as ResearchEntry[];
@@ -1615,6 +1756,81 @@ Rules:
             output: analysis,
             providerExecuted: true,
           });
+
+          if (wasAwaitingCover && resumeSnapshotForPersonalize.trim()) {
+            await runAgentStep(writer, "Personalizing cover letter for this role", async () => {
+              await Promise.resolve();
+            });
+            const jobCtxLines = [
+              `Role: ${jobTitle} at ${company}`,
+              `Company Overview: ${capStr(analysis.companyOverview, 500)}`,
+              `Role Expectations: ${capStr(analysis.roleExpectations, 500)}`,
+              `Positioning Tips: ${capStr(analysis.positioningTips, 500)}`,
+            ].join("\n");
+            const resumeCtx = `\n\nCandidate's Resume:\n${capStr(resumeSnapshotForPersonalize, 3000)}`;
+            const personalizeCoverSystem = `You are a professional cover letter writer. Write a compelling, personalized cover letter for the candidate applying to this role. Use their resume details and the job analysis to tailor every paragraph. Output the cover letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML. ${NO_HREF_RULE}`;
+            const tailoredTitle = `Cover Letter — ${jobTitle} at ${company}`;
+            const personalizedHtml = await produceHtmlDocumentWithRetry(
+              model,
+              `${personalizeCoverSystem}\n\nJob Context:\n${jobCtxLines}${resumeCtx}`,
+              "Generate the Cover Letter.",
+              docMaxOutputTokens("cover-letter"),
+              abortSignal,
+            );
+
+            const pToolId = crypto.randomUUID();
+            writer.write({
+              type: "tool-input-start",
+              toolCallId: pToolId,
+              toolName: "generateDocument",
+              providerExecuted: true,
+            });
+            writer.write({
+              type: "tool-input-available",
+              toolCallId: pToolId,
+              toolName: "generateDocument",
+              input: { documentType: "cover-letter", title: tailoredTitle },
+              providerExecuted: true,
+            });
+
+            await this.persistSidebarTitle(tailoredTitle);
+            try {
+              await this.setState({
+                ...this.state,
+                lastGeneratedDocument: {
+                  title: tailoredTitle,
+                  content: personalizedHtml,
+                  documentType: "cover-letter",
+                },
+                awaitingPersonalizedCoverLetter: false,
+              });
+            } catch (e) {
+              console.error("persist lastGeneratedDocument (personalized after JD):", e);
+            }
+
+            writer.write({
+              type: "tool-output-available",
+              toolCallId: pToolId,
+              output: { content: personalizedHtml, format: "html" },
+              providerExecuted: true,
+            });
+
+            const wrappedPersonalized = this.withSidebarTitleAfterStream(
+              onFinish,
+              model,
+              lastUser,
+              "Personalized cover letter after job posting",
+              abortSignal,
+            );
+            await streamAssistantEchoLine(
+              writer,
+              model,
+              PERSONALIZED_COVER_AFTER_JD_REPLY,
+              wrappedPersonalized,
+              abortSignal,
+            );
+            return;
+          }
 
           const insightStep = beginAgentStep(writer, "Writing reply");
           // Slim commentary prompt: the ResearchCard already shows the full analysis to the user.
