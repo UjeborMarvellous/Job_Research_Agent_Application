@@ -9,9 +9,29 @@ function joinUserText(message: UIMessage): string {
   ).trim();
 }
 
+/** Strip editor session hint prepended for the agent (not shown in chat UI). */
+function stripEditorSessionTag(text: string): string {
+  return text.replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+}
+
 /** Strip editor live-content tag added when the editor is open. */
 function stripEditorContentTag(text: string): string {
   return text.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+}
+
+function stripLeadingAgentTags(text: string): string {
+  let t = text;
+  for (let i = 0; i < 4; i++) {
+    const next = stripEditorSessionTag(stripEditorContentTag(t));
+    if (next === t) break;
+    t = next;
+  }
+  return t;
+}
+
+/** Strip `[editor-session]` / `[editor-content]` prefixes for chat display. */
+export function stripUserMessageTagsForDisplay(text: string): string {
+  return stripLeadingAgentTags(text);
 }
 
 /**
@@ -31,8 +51,8 @@ export function getUserMessagePlainTextForComposer(message: UIMessage): string |
     const delimIdx = body.indexOf("---USER_INTENT---");
     const intent =
       delimIdx >= 0 ? body.slice(delimIdx + "---USER_INTENT---".length).trim() : "";
-    return intent;
+    return stripLeadingAgentTags(intent);
   }
 
-  return stripEditorContentTag(raw);
+  return stripLeadingAgentTags(raw);
 }

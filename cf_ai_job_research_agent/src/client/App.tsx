@@ -110,6 +110,7 @@ interface ChatSessionProps {
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
   editorOpen: boolean;
+  activeDocumentId: string | null;
   activeDocumentTitle: string | null;
   activeDocumentContent: string | null;
   onUpdateActiveDocument: (content: string) => void;
@@ -129,6 +130,7 @@ function ChatSession({
   onResumeExtracted,
   onResumeRemove,
   editorOpen,
+  activeDocumentId,
   activeDocumentTitle,
   activeDocumentContent,
   onUpdateActiveDocument,
@@ -172,6 +174,17 @@ function ChatSession({
 
       let messageText = text;
 
+      // Session hint so the agent knows the editor is open (even before content syncs).
+      if (editorOpen && activeDocumentId) {
+        const sessionPayload = JSON.stringify({
+          open: true,
+          documentId: activeDocumentId,
+          title: activeDocumentTitle ?? "",
+        });
+        const encSession = btoa(unescape(encodeURIComponent(sessionPayload)));
+        messageText = `[editor-session:${encSession}] ${messageText}`;
+      }
+
       // Prepend editor-content tag so backend can use live TipTap HTML for updates
       if (editorOpen && activeDocumentContent) {
         const encoded = btoa(unescape(encodeURIComponent(activeDocumentContent)));
@@ -196,6 +209,8 @@ function ChatSession({
       pendingResume,
       onClearPendingResume,
       editorOpen,
+      activeDocumentId,
+      activeDocumentTitle,
       activeDocumentContent,
       onUserSend,
       editResendFromIndex,
@@ -520,6 +535,7 @@ export default function App() {
           onResumeExtracted={handleResumeExtracted}
           onResumeRemove={handleResumeRemove}
           editorOpen={editorOpen}
+          activeDocumentId={activeDocumentId}
           activeDocumentTitle={activeDocumentTitle}
           activeDocumentContent={activeDocument?.content ?? null}
           onUpdateActiveDocument={handleUpdateActiveDocument}
