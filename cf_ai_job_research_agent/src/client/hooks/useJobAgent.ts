@@ -1,3 +1,4 @@
+import type { Dispatch, SetStateAction } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import type { AgentState, UIMessage } from "../types";
@@ -8,7 +9,7 @@ export default function useJobAgent(sessionId: string) {
     name: sessionId,
   });
 
-  const { messages, sendMessage, status } = useAgentChat({
+  const { messages, sendMessage, setMessages, status } = useAgentChat({
     agent,
   });
 
@@ -17,6 +18,7 @@ export default function useJobAgent(sessionId: string) {
   return {
     messages: messages as UIMessage[],
     sendMessage,
+    setMessages: setMessages as Dispatch<SetStateAction<UIMessage[]>>,
     agentState,
     isStreaming: status === "streaming",
   };

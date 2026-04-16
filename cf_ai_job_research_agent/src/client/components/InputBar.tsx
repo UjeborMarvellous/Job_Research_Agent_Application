@@ -10,6 +10,9 @@ interface InputBarProps {
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
   pendingResumeFileName?: string;
+  /** One-shot prefill (e.g. edit message). `nonce` changes each time so identical text still applies. */
+  composerSeed?: { text: string; nonce: number } | null;
+  onComposerSeedConsumed?: () => void;
   isMobile?: boolean;
 }
 
@@ -20,6 +23,8 @@ export default function InputBar({
   onResumeExtracted,
   onResumeRemove,
   pendingResumeFileName,
+  composerSeed,
+  onComposerSeedConsumed,
   isMobile,
 }: InputBarProps) {
   const [value, setValue] = useState("");
@@ -38,6 +43,13 @@ export default function InputBar({
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
     }
   }, [value]);
+
+  useEffect(() => {
+    if (!composerSeed) return;
+    setValue(composerSeed.text);
+    onComposerSeedConsumed?.();
+    queueMicrotask(() => textareaRef.current?.focus());
+  }, [composerSeed, onComposerSeedConsumed]);
 
   const handleSend = () => {
     const trimmed = value.trim();

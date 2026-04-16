@@ -76,6 +76,11 @@ export interface AgentState {
    * Updated every time a document is generated or revised.
    */
   lastGeneratedDocument?: DocumentMeta | null;
+  /**
+   * True after a generic cover letter was generated without a JD; cleared once a
+   * personalized letter is produced from a saved job analysis.
+   */
+  awaitingPersonalizedCoverLetter?: boolean;
 }
 
 export interface DocumentMeta {

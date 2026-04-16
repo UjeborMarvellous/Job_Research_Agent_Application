@@ -8,6 +8,7 @@ import ChatWindow from "./components/ChatWindow";
 import DocumentEditor from "./components/DocumentEditor";
 import { theme } from "./types";
 import type { ConversationMeta } from "./types";
+import { getUserMessagePlainTextForComposer } from "./utils/userMessageComposerText";
 
 function MobileSidebarDrawer({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
@@ -135,8 +136,12 @@ function ChatSession({
   isMobile,
   onOpenSidebar,
 }: ChatSessionProps) {
-  const { messages, sendMessage, agentState, isStreaming } =
+  const { messages, sendMessage, setMessages, agentState, isStreaming } =
     useJobAgent(sessionId);
+
+  const [suppressServerResumeChip, setSuppressServerResumeChip] = useState(false);
+  const [composerSeed, setComposerSeed] = useState<{ text: string; nonce: number } | null>(null);
+  const [editResendFromIndex, setEditResendFromIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const t = agentState.sidebarTitle?.trim();
@@ -147,10 +152,24 @@ function ChatSession({
     onResumeStateChange(agentState.resumeFileName);
   }, [agentState.resumeFileName, onResumeStateChange]);
 
+  useEffect(() => {
+    if (!isStreaming) setSuppressServerResumeChip(false);
+  }, [isStreaming]);
+
   // Fix 2 — attach pending resume to the next user send
   // Step 8 — attach live editor content tag when editor is open (for update-document intent)
   const handleSend = useCallback(
     (text: string) => {
+      if (editResendFromIndex !== null) {
+        const idx = editResendFromIndex;
+        setEditResendFromIndex(null);
+        setMessages((msgs) => msgs.slice(0, idx));
+      }
+
+      if (pendingResume || resumeFileName) {
+        setSuppressServerResumeChip(true);
+      }
+
       let messageText = text;
 
       // Prepend editor-content tag so backend can use live TipTap HTML for updates
@@ -171,7 +190,17 @@ function ChatSession({
 
       onUserSend();
     },
-    [sendMessage, pendingResume, onClearPendingResume, editorOpen, activeDocumentContent, onUserSend],
+    [
+      sendMessage,
+      setMessages,
+      pendingResume,
+      onClearPendingResume,
+      editorOpen,
+      activeDocumentContent,
+      onUserSend,
+      editResendFromIndex,
+      resumeFileName,
+    ],
   );
 
   const handleRetry = useCallback(() => {
@@ -202,6 +231,18 @@ function ChatSession({
     }
   }, [agentState.lastGeneratedDocument]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleBeginEditUserMessage = useCallback(
+    (index: number) => {
+      const msg = messages[index];
+      if (!msg) return;
+      const text = getUserMessagePlainTextForComposer(msg);
+      if (text === null) return;
+      setComposerSeed({ text, nonce: Date.now() });
+      setEditResendFromIndex(index);
+    },
+    [messages],
+  );
+
   return (
     <ChatWindow
       messages={messages}
@@ -210,10 +251,13 @@ function ChatSession({
       onRetry={handleRetry}
       onOpenDocument={onOpenDocument}
       stateDocContent={agentState.lastGeneratedDocument?.content ?? null}
-      resumeFileName={resumeFileName}
+      resumeFileName={suppressServerResumeChip ? undefined : resumeFileName}
       onResumeExtracted={onResumeExtracted}
       onResumeRemove={onResumeRemove}
       pendingResumeFileName={pendingResume?.fileName}
+      composerSeed={composerSeed}
+      onComposerSeedConsumed={() => setComposerSeed(null)}
+      onBeginEditUserMessage={handleBeginEditUserMessage}
       isMobile={isMobile}
       onOpenSidebar={onOpenSidebar}
     />
