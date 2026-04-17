@@ -265,6 +265,7 @@ export default function ChatWindow({
                     documentVersionMap={documentVersionMap}
                     documentVersionByToolCallId={documentVersionByToolCallId}
                     onLoadDocumentVersion={onLoadDocumentVersion}
+                    isStreaming={msg.id === lastAssistantId && isStreaming}
                     canEditUserMessage={
                       msg.role === "user" &&
                       !!onBeginEditUserMessage &&
