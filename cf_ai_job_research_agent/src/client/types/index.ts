@@ -63,6 +63,14 @@ export interface ResearchEntry {
   analysis: JobAnalysis;
 }
 
+/** One immutable snapshot of generated/revised document HTML (keyed by deterministic id). */
+export interface DocumentSnapshot {
+  content: string;
+  timestamp: string;
+  title: string;
+  documentType: string;
+}
+
 export interface AgentState {
   researches: ResearchEntry[];
   resumeText?: string;
@@ -77,6 +85,16 @@ export interface AgentState {
    */
   lastGeneratedDocument?: DocumentMeta | null;
   /**
+   * Snapshots keyed by {@link DocumentMeta.documentId} (hash of content).
+   * Chat tool parts reference a snapshot via `versionedDocumentId` so older links stay valid.
+   */
+  documentVersionMap?: Record<string, DocumentSnapshot>;
+  /**
+   * Maps each `generateDocument` UI tool `toolCallId` to the same snapshot id as in
+   * {@link documentVersionMap}. Survives when message payloads drop custom `output` fields.
+   */
+  documentVersionByToolCallId?: Record<string, string>;
+  /**
    * True after a generic cover letter was generated without a JD; cleared once a
    * personalized letter is produced from a saved job analysis.
    */
@@ -87,6 +105,8 @@ export interface DocumentMeta {
   title: string;
   content: string;
   documentType: string;
+  /** SHA-256–based snapshot id; present for all documents written after versioning shipped. */
+  documentId?: string;
 }
 
 export interface ConversationMeta {

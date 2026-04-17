@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo } from "react";
 import { ScanSearch, AlertTriangle, Menu } from "lucide-react";
 import { theme } from "../types";
-import type { UIMessage } from "../types";
+import type { DocumentSnapshot, UIMessage } from "../types";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import InputBar from "./InputBar";
@@ -56,6 +56,11 @@ interface ChatWindowProps {
   onOpenDocument?: (doc: { title: string; content: string }) => void;
   /** Full document from DO state (bypasses message truncation). */
   stateDocContent?: string | null;
+  documentVersionMap?: Record<string, DocumentSnapshot>;
+  /** toolCallId → snapshot id (survives when tool output is sanitized). */
+  documentVersionByToolCallId?: Record<string, string>;
+  /** Load a snapshot into the editor (by deterministic id from tool output). */
+  onLoadDocumentVersion?: (versionedDocumentId: string) => void;
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
@@ -76,6 +81,9 @@ export default function ChatWindow({
   onRetry,
   onOpenDocument,
   stateDocContent,
+  documentVersionMap = {},
+  documentVersionByToolCallId = {},
+  onLoadDocumentVersion,
   resumeFileName,
   onResumeExtracted,
   onResumeRemove,
@@ -242,11 +250,11 @@ export default function ChatWindow({
           ) : (
             <>
               {(() => {
-                // stateDocContent is the latest DO-state document and must only
-                // be given to the last assistant bubble. Passing it to all bubbles
-                // means older "Open in Editor" buttons silently reference the
-                // newest document instead of the one they generated.
-                const lastAssistantId = [...messages].reverse().find(m => m.role === "assistant")?.id ?? null;
+                // stateDocContent is the latest DO-state document; only pass it
+                // to the last assistant bubble as a fallback when a tool part has
+                // no versionedDocumentId (legacy threads).
+                const lastAssistantId =
+                  [...messages].reverse().find((m) => m.role === "assistant")?.id ?? null;
                 return messages.map((msg, index) => (
                   <MessageBubble
                     key={msg.id}
@@ -254,6 +262,9 @@ export default function ChatWindow({
                     messageIndex={index}
                     onOpenDocument={onOpenDocument}
                     stateDocContent={msg.id === lastAssistantId ? stateDocContent : null}
+                    documentVersionMap={documentVersionMap}
+                    documentVersionByToolCallId={documentVersionByToolCallId}
+                    onLoadDocumentVersion={onLoadDocumentVersion}
                     canEditUserMessage={
                       msg.role === "user" &&
                       !!onBeginEditUserMessage &&
