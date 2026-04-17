@@ -164,6 +164,8 @@ function TextWithLinks({
               borderRadius: "3px",
               padding: "0 2px",
               transition: "background 100ms ease",
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLSpanElement).style.background = theme.colors.surfaceElevated;
@@ -192,7 +194,7 @@ function looksLikeRawFunctionCallJson(text: string): boolean {
 interface MessageBubbleProps {
   message: UIMessage;
   messageIndex?: number;
-  onOpenDocument?: (doc: { title: string; content: string }) => void;
+  onOpenDocument?: (doc: { title: string; content: string }, opts?: { fromAgent?: boolean }) => void;
   /** Full document from DO state — used instead of (possibly truncated) message part content. */
   stateDocContent?: string | null;
   /** Snapshots from agent state; keyed by tool output `versionedDocumentId`. */
@@ -204,6 +206,7 @@ interface MessageBubbleProps {
   canEditUserMessage?: boolean;
   onEditUserMessage?: (messageIndex: number) => void;
   isStreaming?: boolean;
+  isMobile?: boolean;
 }
 
 function assistantMessagePlainText(message: UIMessage): string {
@@ -229,7 +232,9 @@ function MessageBubble({
   canEditUserMessage,
   onEditUserMessage,
   isStreaming = false,
+  isMobile,
 }: MessageBubbleProps) {
+  const compact = isMobile === true;
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [userRowHover, setUserRowHover] = useState(false);
   const [assistantRowHover, setAssistantRowHover] = useState(false);
@@ -248,12 +253,12 @@ function MessageBubble({
       aria-label="Edit message"
       style={{
         alignSelf: "flex-start",
-        marginTop: "8px",
+        marginTop: compact ? "6px" : "8px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        width: "28px",
-        height: "28px",
+        width: compact ? "26px" : "28px",
+        height: compact ? "26px" : "28px",
         borderRadius: "8px",
         border: "none",
         background: userRowHover ? theme.colors.surfaceElevated : "transparent",
@@ -264,7 +269,7 @@ function MessageBubble({
         transition: "opacity 120ms ease, background 120ms ease",
       }}
     >
-      <Pencil size={14} />
+      <Pencil size={compact ? 13 : 14} />
     </button>
   ) : null;
 
@@ -308,34 +313,45 @@ function MessageBubble({
                 justifyContent: "flex-end",
                 gap: "4px",
                 margin: "3px 0",
+                minWidth: 0,
+                width: "100%",
               }}
             >
               <div
-                style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-end",
+                  gap: "4px",
+                  minWidth: 0,
+                  width: "100%",
+                  maxWidth: "100%",
+                  boxSizing: "border-box",
+                }}
               >
                 <div
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: "6px",
-                    padding: "7px 12px",
+                    gap: compact ? "5px" : "6px",
+                    padding: compact ? "6px 10px" : "7px 12px",
                     background: theme.colors.text,
-                    borderRadius: "18px",
+                    borderRadius: compact ? "14px" : "18px",
                     boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                    maxWidth: "68%",
+                    maxWidth: compact ? "min(100%, 85%)" : "68%",
                   }}
                 >
-                  <FileText size={13} color="#ffffff" style={{ flexShrink: 0 }} />
+                  <FileText size={compact ? 12 : 13} color="#ffffff" style={{ flexShrink: 0 }} />
                   <span
                     style={{
-                      fontSize: theme.font.size.sm,
+                      fontSize: compact ? theme.font.size.xs : theme.font.size.sm,
                       color: "#ffffff",
                       fontFamily: theme.font.family,
                       fontWeight: theme.font.weight.medium,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      maxWidth: "220px",
+                      maxWidth: compact ? "140px" : "220px",
                     }}
                   >
                     {fileName}
@@ -345,15 +361,18 @@ function MessageBubble({
                   <div
                     style={{
                       background: theme.colors.text,
-                      borderRadius: "18px",
-                      padding: "10px 16px",
-                      maxWidth: "68%",
+                      borderRadius: compact ? "14px" : "18px",
+                      padding: compact ? "8px 12px" : "10px 16px",
+                      maxWidth: compact ? "min(100%, 85%)" : "68%",
+                      minWidth: 0,
                       boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                      overflowWrap: "break-word",
+                      wordBreak: "break-word",
                     }}
                   >
                     <p
                       style={{
-                        fontSize: theme.font.size.base,
+                        fontSize: compact ? theme.font.size.sm : theme.font.size.base,
                         color: "#ffffff",
                         lineHeight: String(theme.font.lineHeight.relaxed),
                         fontFamily: theme.font.family,
@@ -389,28 +408,45 @@ function MessageBubble({
               justifyContent: "flex-end",
               gap: "4px",
               margin: "3px 0",
+              minWidth: 0,
+              width: "100%",
             }}
           >
             <div
               style={{
-                background: theme.colors.text,
-                borderRadius: "18px",
-                padding: "10px 16px",
-                maxWidth: "68%",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                minWidth: 0,
+                width: "100%",
+                maxWidth: "100%",
+                boxSizing: "border-box",
               }}
             >
-              <p
+              <div
                 style={{
-                  fontSize: theme.font.size.base,
-                  color: "#ffffff",
-                  lineHeight: String(theme.font.lineHeight.relaxed),
-                  fontFamily: theme.font.family,
-                  whiteSpace: "pre-wrap",
+                  background: theme.colors.text,
+                  borderRadius: compact ? "14px" : "18px",
+                  padding: compact ? "8px 12px" : "10px 16px",
+                  maxWidth: compact ? "min(100%, 85%)" : "68%",
+                  minWidth: 0,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                  overflowWrap: "break-word",
+                  wordBreak: "break-word",
                 }}
               >
-                <TextWithLinks text={displayText} color="#ffffff" onLinkClick={setActiveUrl} />
-              </p>
+                <p
+                  style={{
+                    fontSize: compact ? theme.font.size.sm : theme.font.size.base,
+                    color: "#ffffff",
+                    lineHeight: String(theme.font.lineHeight.relaxed),
+                    fontFamily: theme.font.family,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  <TextWithLinks text={displayText} color="#ffffff" onLinkClick={setActiveUrl} />
+                </p>
+              </div>
             </div>
             {userEditBtn}
           </div>
@@ -432,14 +468,18 @@ function MessageBubble({
             <p
               key={`t-${index}`}
               style={{
-                fontSize: "15px",
+                fontSize: compact ? theme.font.size.sm : "15px",
                 color: theme.colors.text,
                 lineHeight: String(theme.font.lineHeight.relaxed),
                 fontFamily: theme.font.family,
                 whiteSpace: "pre-wrap",
-                paddingLeft: "14px",
+                overflowWrap: "break-word",
+                wordBreak: "break-word",
+                paddingLeft: compact ? "10px" : "14px",
                 borderLeft: `2px solid ${theme.colors.border}`,
-                marginBottom: "8px",
+                marginBottom: compact ? "6px" : "8px",
+                minWidth: 0,
+                maxWidth: "100%",
               }}
             >
               <TextWithLinks text={part.text} color={theme.colors.text} onLinkClick={setActiveUrl} />
@@ -456,10 +496,12 @@ function MessageBubble({
             if (isStreaming) {
               const out = aiPart.output as { ok?: boolean } | undefined;
               const ok = out?.ok !== false;
-              toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state={ok ? "done" : "error"} />);
+              toolElements.push(
+                <AgentStepRow key={`s-${index}`} label={label} state={ok ? "done" : "error"} compact={compact} />,
+              );
             }
           } else if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
-            toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state="active" />);
+            toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state="active" compact={compact} />);
           }
           return;
         }
@@ -473,13 +515,14 @@ function MessageBubble({
                 data={aiPart.output as JobAnalysis}
                 company={input.company ?? ""}
                 jobTitle={input.jobTitle ?? ""}
+                compact={compact}
               />,
             );
           } else if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
             toolElements.push(
-              <div key={`a-${index}`} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}>
-                <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
-                <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
+              <div key={`a-${index}`} style={{ display: "flex", alignItems: "center", gap: compact ? "5px" : "6px", padding: compact ? "3px 0" : "4px 0" }}>
+                <Loader2 size={compact ? 11 : 12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+                <span style={{ fontSize: compact ? theme.font.size.xs : theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
                   Analyzing role...
                 </span>
               </div>,
@@ -505,6 +548,7 @@ function MessageBubble({
               data={typedPart.output as JobAnalysis}
               company={typedPart.input?.company ?? ""}
               jobTitle={typedPart.input?.jobTitle ?? ""}
+              compact={compact}
             />,
           );
           return;
@@ -516,9 +560,9 @@ function MessageBubble({
           (part as { toolName?: string }).toolName === "analyzeJobPosting"
         ) {
           toolElements.push(
-            <div key={`ac-${index}`} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}>
-              <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
-              <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
+            <div key={`ac-${index}`} style={{ display: "flex", alignItems: "center", gap: compact ? "5px" : "6px", padding: compact ? "3px 0" : "4px 0" }}>
+              <Loader2 size={compact ? 11 : 12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+              <span style={{ fontSize: compact ? theme.font.size.xs : theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
                 Analyzing role...
               </span>
             </div>,
@@ -566,10 +610,19 @@ function MessageBubble({
             const interactive = canOpenVersion || (!!onOpenDocument && !!content);
             const cardShellStyle: CSSProperties = {
               display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              padding: isRevision ? "8px 12px" : "10px 14px",
-              marginTop: "8px",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              gap: compact ? "8px" : "10px",
+              padding: isRevision
+                ? compact
+                  ? "6px 10px"
+                  : "8px 12px"
+                : compact
+                  ? "8px 10px"
+                  : "10px 14px",
+              marginTop: compact ? "6px" : "8px",
+              minWidth: 0,
+              maxWidth: "100%",
               background: theme.colors.surface,
               border: `1px solid ${theme.colors.border}`,
               borderRadius: theme.radius.md,
@@ -616,17 +669,19 @@ function MessageBubble({
                       : undefined
                   }
                 >
-                  <FileText size={15} color={theme.colors.success} />
+                  <FileText size={compact ? 14 : 15} color={theme.colors.success} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p
                       style={{
-                        fontSize: theme.font.size.sm,
+                        fontSize: compact ? theme.font.size.xs : theme.font.size.sm,
                         fontWeight: theme.font.weight.semibold,
                         color: theme.colors.text,
                         fontFamily: theme.font.family,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        overflow: compact ? "visible" : "hidden",
+                        textOverflow: compact ? "clip" : "ellipsis",
+                        whiteSpace: compact ? "normal" : "nowrap",
+                        overflowWrap: compact ? "anywhere" : undefined,
+                        wordBreak: compact ? "break-word" : undefined,
                       }}
                     >
                       {title}
@@ -694,17 +749,19 @@ function MessageBubble({
                       : undefined
                   }
                 >
-                  <FileText size={16} color={theme.colors.textSecondary} />
+                  <FileText size={compact ? 14 : 16} color={theme.colors.textSecondary} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p
                       style={{
-                        fontSize: theme.font.size.base,
+                        fontSize: compact ? theme.font.size.sm : theme.font.size.base,
                         fontWeight: theme.font.weight.semibold,
                         color: theme.colors.text,
                         fontFamily: theme.font.family,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        overflow: compact ? "visible" : "hidden",
+                        textOverflow: compact ? "clip" : "ellipsis",
+                        whiteSpace: compact ? "normal" : "nowrap",
+                        overflowWrap: compact ? "anywhere" : undefined,
+                        wordBreak: compact ? "break-word" : undefined,
                       }}
                     >
                       {title}
@@ -743,9 +800,9 @@ function MessageBubble({
             const input = aiPart.input as { documentRevision?: boolean };
             const isRevision = input?.documentRevision === true;
             toolElements.push(
-              <div key={`dl-${index}`} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "4px 0" }}>
-                <Loader2 size={12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
-                <span style={{ fontSize: theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
+              <div key={`dl-${index}`} style={{ display: "flex", alignItems: "center", gap: compact ? "5px" : "6px", padding: compact ? "3px 0" : "4px 0" }}>
+                <Loader2 size={compact ? 11 : 12} color={theme.colors.textMuted} style={{ animation: "spin 1s linear infinite" }} />
+                <span style={{ fontSize: compact ? theme.font.size.xs : theme.font.size.sm, color: theme.colors.textMuted, fontFamily: theme.font.family }}>
                   {isRevision ? "Applying revisions…" : "Generating document..."}
                 </span>
               </div>,
@@ -770,9 +827,12 @@ function MessageBubble({
               display: "flex",
               justifyContent: "flex-start",
               margin: "3px 0",
-              maxWidth: "82%",
+              width: "100%",
+              minWidth: 0,
+              maxWidth: compact ? "100%" : "82%",
+              boxSizing: "border-box",
               flexDirection: "column",
-              paddingRight: showAssistantCopy ? "36px" : "0",
+              paddingRight: showAssistantCopy ? (compact ? "30px" : "36px") : "0",
             }}
           >
             {showAssistantCopy && (
@@ -788,8 +848,8 @@ function MessageBubble({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  width: "30px",
-                  height: "30px",
+                  width: compact ? "28px" : "30px",
+                  height: compact ? "28px" : "30px",
                   borderRadius: "8px",
                   border: "none",
                   background:
@@ -802,7 +862,11 @@ function MessageBubble({
                   transition: "opacity 120ms ease, background 120ms ease, color 120ms ease",
                 }}
               >
-                {copiedAssistant ? <Check size={15} strokeWidth={2.5} /> : <Copy size={15} />}
+                {copiedAssistant ? (
+                  <Check size={compact ? 14 : 15} strokeWidth={2.5} />
+                ) : (
+                  <Copy size={compact ? 14 : 15} />
+                )}
               </button>
             )}
             {toolElements}
