@@ -203,6 +203,7 @@ interface MessageBubbleProps {
   onLoadDocumentVersion?: (versionedDocumentId: string) => void;
   canEditUserMessage?: boolean;
   onEditUserMessage?: (messageIndex: number) => void;
+  isStreaming?: boolean;
 }
 
 function assistantMessagePlainText(message: UIMessage): string {
@@ -227,6 +228,7 @@ function MessageBubble({
   onLoadDocumentVersion,
   canEditUserMessage,
   onEditUserMessage,
+  isStreaming = false,
 }: MessageBubbleProps) {
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [userRowHover, setUserRowHover] = useState(false);
@@ -451,9 +453,11 @@ function MessageBubble({
           const input = aiPart.input as { label?: string } | undefined;
           const label = input?.label?.trim() || "Working…";
           if (aiPart.state === "output-available") {
-            const out = aiPart.output as { ok?: boolean } | undefined;
-            const ok = out?.ok !== false;
-            toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state={ok ? "done" : "error"} />);
+            if (isStreaming) {
+              const out = aiPart.output as { ok?: boolean } | undefined;
+              const ok = out?.ok !== false;
+              toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state={ok ? "done" : "error"} />);
+            }
           } else if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
             toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state="active" />);
           }

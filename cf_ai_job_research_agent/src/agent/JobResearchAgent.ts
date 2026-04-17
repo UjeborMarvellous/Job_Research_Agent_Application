@@ -74,9 +74,9 @@ function docMaxOutputTokens(docType: string): number {
   return docType === "cv-tips" ? 3072 : 2048;
 }
 
-/** Shown in chat when a generic cover letter is placed in the editor (exact wording). */
+/** Shown in chat when a generic cover letter template is placed in the editor (exact wording). */
 const GENERIC_COVER_ASSISTANT_REPLY =
-  "Here's a generic cover letter in the editor. For a personalized version, paste the Job Description or a link here.";
+  "I've loaded a cover letter template in the editor with your details pre-filled — the highlighted fields are the ones that need the job-specific info. Paste the job description here and I'll tailor every paragraph to the role instantly.";
 
 /** Shown after the user pastes a JD and the editor is updated with a tailored letter. */
 const PERSONALIZED_COVER_AFTER_JD_REPLY =
@@ -1351,6 +1351,7 @@ CRITICAL RULES — follow without exception:
 1. NEVER invent or fabricate specific job listing URLs. Only use URLs that appear in the "Pre-Built Job Search Links" or "Web search results" sections below.
 2. If job search links ARE provided below: present ALL of them clearly to the user, one per line, with a brief label. Tell the user each link opens a real, pre-filtered search tailored to their background.
 3. If NO job links are provided below and the user asks for job listings: suggest they paste a job description for a detailed analysis, or share their target role/industry so you can guide them better.
+4. NEVER generate sample job descriptions, sample cover letters, sample resumes, or any fabricated "example" content in the chat. If the user asks for a cover letter or document without uploading their resume first, warmly invite them to upload their resume and paste a job description — do not produce fake sample content.
 
 The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
             }
@@ -1410,8 +1411,8 @@ The user can paste a job description to get a detailed analysis. They currently 
               const gateStep = beginAgentStep(writer, "Writing reply");
               const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
               const hint = hasAnyJobContext
-                ? "Please upload your resume first so I can tailor the document to your experience."
-                : "I need both a job description and your resume before I can write a tailored document. Please paste a job description and upload your resume.";
+                ? "The user wants a document but hasn't uploaded a resume yet. Warmly let them know you'd love to make this personal — ask them to upload their resume so you can tailor every line to their experience. 2 sentences max."
+                : "The user wants a document but has no resume and no job description yet. Respond warmly in 2 sentences: acknowledge their request with enthusiasm, then invite them to upload their resume and paste the job description so you can write something genuinely tailored to them. Do NOT generate any sample content, templates, or examples.";
               const st = streamText({
                 model,
                 temperature: 0.7,
@@ -1456,7 +1457,17 @@ The user can paste a job description to get a detailed analysis. They currently 
                 await Promise.resolve();
               });
               const genericTitle = "Cover Letter (generic)";
-              const genericSystem = `You are a professional cover letter writer. The user has not provided a specific job posting yet. Write a polished, adaptable cover letter using only their resume information. Do not invent an employer name or role title; keep references general (for example "the role", "your team", or "this opportunity"). Output the letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML. ${NO_HREF_RULE}`;
+              const genericSystem = `You are a professional cover letter writer. The user has not provided a specific job posting yet. Generate a cover letter TEMPLATE in clean HTML using the candidate's real details from their resume (name, background, skills) but replace every job-specific field with a clearly labeled placeholder styled with a light yellow background.
+
+Use these exact placeholder formats, each wrapped in: <span style="background:#fef9c3;padding:0 3px;border-radius:3px;font-weight:600;">[ PLACEHOLDER ]</span>
+- [ HIRING MANAGER NAME ] — salutation line
+- [ COMPANY NAME ] — every reference to the employer
+- [ JOB TITLE ] — every reference to the role
+- [ KEY REQUIREMENT FROM JOB DESCRIPTION ] — for tailored skill match paragraphs
+- [ SPECIFIC TEAM OR DEPARTMENT ] — if referencing a team
+- [ TODAY'S DATE ] — date line at the top
+
+Use <p>, <strong>, <em>, <br> tags. Output ONLY the HTML — no preamble, no explanation, no markdown. ${NO_HREF_RULE}`;
               const resumeContextGeneric = `\n\nCandidate's Resume:\n${capStr(resumeText, 3000)}`;
               const genericTokenCap = docMaxOutputTokens("cover-letter");
               const genericHtml = await produceHtmlDocumentWithRetry(
