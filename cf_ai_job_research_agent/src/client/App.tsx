@@ -19,49 +19,10 @@ function MobileSidebarDrawer({ children, onClose }: { children: React.ReactNode;
   );
 }
 
-function MobileDocOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function MobileDocOverlay({ children }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div className="mobile-doc-overlay">
-      <div
-        style={{
-          height: "48px",
-          display: "flex",
-          alignItems: "center",
-          padding: "0 12px",
-          borderBottom: `1px solid ${theme.colors.border}`,
-          flexShrink: 0,
-        }}
-      >
-        <button
-          onClick={onClose}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "32px",
-            height: "32px",
-            borderRadius: "8px",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            color: theme.colors.text,
-          }}
-        >
-          <X size={18} />
-        </button>
-        <span
-          style={{
-            marginLeft: "8px",
-            fontSize: theme.font.size.md,
-            fontWeight: theme.font.weight.medium,
-            fontFamily: theme.font.family,
-            color: theme.colors.text,
-          }}
-        >
-          Document
-        </span>
-      </div>
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {children}
       </div>
     </div>
@@ -102,13 +63,16 @@ interface OpenDocument {
 interface ChatSessionProps {
   onTitleUpdate: (title: string) => void;
   onResumeStateChange: (fileName: string | undefined) => void;
-  onOpenDocument: (doc: { title: string; content: string }) => void;
+  onOpenDocument: (doc: { title: string; content: string }, opts?: { fromAgent?: boolean }) => void;
   pendingResume: { text: string; fileName: string } | null;
   onClearPendingResume: () => void;
   resumeFileName?: string;
   onResumeExtracted: (text: string, fileName: string) => void;
   onResumeRemove: () => void;
+  /** True when the composer should attach editor-session / editor-content (desktop: any open doc; mobile: sheet visible). */
   editorOpen: boolean;
+  /** True when the document stack has at least one doc (used for agent doc refresh vs new insert). */
+  hasOpenDocuments: boolean;
   activeDocumentId: string | null;
   activeDocumentTitle: string | null;
   activeDocumentContent: string | null;
@@ -136,6 +100,7 @@ function ChatSession({
   onResumeExtracted,
   onResumeRemove,
   editorOpen,
+  hasOpenDocuments,
   activeDocumentId,
   activeDocumentTitle,
   activeDocumentContent,
@@ -251,12 +216,18 @@ function ChatSession({
     lastGenDocContentRef.current = stateDoc.content;
 
     const title = stateDoc.title ?? "Document";
-    if (editorOpen && activeDocumentTitle === title) {
+    if (hasOpenDocuments && activeDocumentTitle === title) {
       onUpdateActiveDocument(stateDoc.content);
     } else {
-      onOpenDocument({ title, content: stateDoc.content });
+      onOpenDocument({ title, content: stateDoc.content }, { fromAgent: true });
     }
-  }, [agentState.lastGeneratedDocument]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    agentState.lastGeneratedDocument,
+    hasOpenDocuments,
+    activeDocumentTitle,
+    onUpdateActiveDocument,
+    onOpenDocument,
+  ]);
 
   const handleBeginEditUserMessage = useCallback(
     (index: number) => {
@@ -331,9 +302,19 @@ export default function App() {
   // Fix 4 — document stack replaces single editorDocument
   const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
-  const editorOpen = openDocuments.length > 0;
+  const [mobileEditorSheetOpen, setMobileEditorSheetOpen] = useState(false);
+  const hasOpenDocuments = openDocuments.length > 0;
+  const editorOpenForComposer = !isMobile ? hasOpenDocuments : mobileEditorSheetOpen;
   const activeDocument = openDocuments.find((d) => d.id === activeDocumentId) ?? null;
   const activeDocumentTitle = activeDocument?.title ?? null;
+
+  useEffect(() => {
+    if (openDocuments.length === 0) setMobileEditorSheetOpen(false);
+  }, [openDocuments.length]);
+
+  useEffect(() => {
+    if (!isMobile) setMobileEditorSheetOpen(false);
+  }, [isMobile]);
 
   useEffect(() => {
     localStorage.setItem(ACTIVE_KEY, activeSessionId);
@@ -370,6 +351,7 @@ export default function App() {
     setActiveSessionId(id);
     setOpenDocuments([]);
     setActiveDocumentId(null);
+    setMobileEditorSheetOpen(false);
     setMobileDrawerOpen(false);
   }, []);
 
@@ -377,6 +359,7 @@ export default function App() {
     setActiveSessionId(id);
     setOpenDocuments([]);
     setActiveDocumentId(null);
+    setMobileEditorSheetOpen(false);
     setMobileDrawerOpen(false);
   }, []);
 
@@ -395,12 +378,14 @@ export default function App() {
           setActiveSessionId(newId);
           setOpenDocuments([]);
           setActiveDocumentId(null);
+          setMobileEditorSheetOpen(false);
           return [fresh];
         }
         if (id === activeSessionId) {
           setActiveSessionId(remaining[0].id);
           setOpenDocuments([]);
           setActiveDocumentId(null);
+          setMobileEditorSheetOpen(false);
         }
         return remaining;
       });
@@ -437,19 +422,25 @@ export default function App() {
     );
   }, [activeSessionId]);
 
-  // Fix 4 — open / upsert document by title
-  const handleOpenDocument = useCallback((doc: { title: string; content: string }) => {
-    setOpenDocuments((prev) => {
-      const existing = prev.find((d) => d.title === doc.title);
-      if (existing) {
-        setActiveDocumentId(existing.id);
-        return prev.map((d) => d.id === existing.id ? { ...d, content: doc.content } : d);
+  // Fix 4 — open / upsert document by title (`fromAgent`: do not auto-open mobile editor sheet)
+  const handleOpenDocument = useCallback(
+    (doc: { title: string; content: string }, opts?: { fromAgent?: boolean }) => {
+      setOpenDocuments((prev) => {
+        const existing = prev.find((d) => d.title === doc.title);
+        if (existing) {
+          setActiveDocumentId(existing.id);
+          return prev.map((d) => d.id === existing.id ? { ...d, content: doc.content } : d);
+        }
+        const newDoc = { id: crypto.randomUUID(), ...doc };
+        setActiveDocumentId(newDoc.id);
+        return [...prev, newDoc];
+      });
+      if (isMobile && !opts?.fromAgent) {
+        setMobileEditorSheetOpen(true);
       }
-      const newDoc = { id: crypto.randomUUID(), ...doc };
-      setActiveDocumentId(newDoc.id);
-      return [...prev, newDoc];
-    });
-  }, []);
+    },
+    [isMobile],
+  );
 
   const handleCloseDocument = useCallback(
     (id: string) => {
@@ -489,8 +480,9 @@ export default function App() {
         setActiveDocumentId(newDoc.id);
         return [...prev, newDoc];
       });
+      if (isMobile) setMobileEditorSheetOpen(true);
     },
-    [documentVersionMap],
+    [documentVersionMap, isMobile],
   );
 
   // Fix 3 — called by ChatSession when agent pushes new content for the active doc
@@ -513,11 +505,12 @@ export default function App() {
   const handleCloseAllDocs = useCallback(() => {
     setOpenDocuments([]);
     setActiveDocumentId(null);
+    setMobileEditorSheetOpen(false);
   }, []);
 
   return (
     <Flex
-      height="100vh"
+      height="100dvh"
       overflow="hidden"
       style={{
         background: "var(--color-viewport)",
@@ -555,6 +548,8 @@ export default function App() {
 
       <Box
         flex="1"
+        minW={0}
+        maxW="100%"
         overflow="hidden"
         display="flex"
         flexDirection="column"
@@ -574,7 +569,8 @@ export default function App() {
           resumeFileName={uploadedResumeFileName}
           onResumeExtracted={handleResumeExtracted}
           onResumeRemove={handleResumeRemove}
-          editorOpen={editorOpen}
+          editorOpen={editorOpenForComposer}
+          hasOpenDocuments={hasOpenDocuments}
           activeDocumentId={activeDocumentId}
           activeDocumentTitle={activeDocumentTitle}
           activeDocumentContent={activeDocument?.content ?? null}
@@ -593,9 +589,10 @@ export default function App() {
         />
       </Box>
 
-      {/* DocumentEditor: side panel on desktop, full-screen overlay on mobile */}
-      {editorOpen && activeDocument && (
+      {/* DocumentEditor: side panel on desktop; mobile overlay only after user opens sheet */}
+      {hasOpenDocuments && activeDocument && (
         isMobile ? (
+          mobileEditorSheetOpen && (
           <MobileDocOverlay onClose={handleCloseAllDocs}>
             <DocumentEditor
               openDocuments={openDocuments}
@@ -603,8 +600,10 @@ export default function App() {
               onCloseDocument={handleCloseDocument}
               onSetActiveDocument={handleSetActiveDocument}
               onUpdateContent={handleUpdateDocumentContent}
+              isMobile={true}
             />
           </MobileDocOverlay>
+          )
         ) : (
           <DocumentEditor
             openDocuments={openDocuments}

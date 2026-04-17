@@ -55,6 +55,7 @@ interface DocumentEditorProps {
   onCloseDocument: (id: string) => void;
   onSetActiveDocument: (id: string) => void;
   onUpdateContent: (id: string, content: string) => void;
+  isMobile?: boolean;
 }
 
 function ToolbarBtn({
@@ -86,6 +87,7 @@ export default function DocumentEditor({
   onCloseDocument,
   onSetActiveDocument,
   onUpdateContent,
+  isMobile = false,
 }: DocumentEditorProps) {
   const activeDoc = openDocuments.find((d) => d.id === activeDocumentId) ?? openDocuments[0];
 
@@ -178,14 +180,19 @@ export default function DocumentEditor({
     <div
       style={{
         flex: 1,
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
-        borderLeft: `1px solid ${theme.colors.border}`,
         background: theme.colors.background,
-        minWidth: "300px",
-        maxWidth: "50%",
         animation: "fadeSlideUp 250ms ease-out",
-        boxShadow: "-4px 0 24px rgba(0,0,0,0.08)",
+        ...(isMobile
+          ? { width: "100%", minWidth: 0 }
+          : {
+              borderLeft: `1px solid ${theme.colors.border}`,
+              minWidth: "300px",
+              maxWidth: "50%",
+              boxShadow: "-4px 0 24px rgba(0,0,0,0.08)",
+            }),
       }}
     >
       {/* Tab bar — Fix 4 */}
@@ -391,7 +398,7 @@ export default function DocumentEditor({
       </div>
 
       {/* Editor area */}
-      <div style={{ flex: 1, overflowY: "auto", background: theme.colors.background }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", background: theme.colors.background }}>
         <EditorContent editor={editor} />
       </div>
 
@@ -401,7 +408,7 @@ export default function DocumentEditor({
           display: "flex",
           alignItems: "center",
           gap: "8px",
-          padding: "10px 16px",
+          padding: isMobile ? "10px 16px 24px" : "10px 16px",
           borderTop: `1px solid ${theme.colors.border}`,
           background: theme.colors.surface,
           flexShrink: 0,

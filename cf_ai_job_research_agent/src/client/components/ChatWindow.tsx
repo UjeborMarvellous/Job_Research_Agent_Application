@@ -53,7 +53,7 @@ interface ChatWindowProps {
   isStreaming: boolean;
   onSend: (text: string) => void;
   onRetry?: () => void;
-  onOpenDocument?: (doc: { title: string; content: string }) => void;
+  onOpenDocument?: (doc: { title: string; content: string }, opts?: { fromAgent?: boolean }) => void;
   /** Full document from DO state (bypasses message truncation). */
   stateDocContent?: string | null;
   documentVersionMap?: Record<string, DocumentSnapshot>;
@@ -123,6 +123,10 @@ export default function ChatWindow({
         display: "flex",
         flexDirection: "column",
         flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        width: "100%",
+        maxWidth: "100%",
         overflow: "hidden",
         background: theme.colors.background,
         borderRadius: "16px",
@@ -131,19 +135,22 @@ export default function ChatWindow({
       {/* Top bar */}
       <div
         style={{
-          height: "56px",
+          height: isMobile ? "48px" : "56px",
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: isMobile ? "0 14px" : "0 24px",
+          paddingTop: 0,
+          paddingBottom: 0,
+          paddingLeft: isMobile ? "max(10px, env(safe-area-inset-left, 0px))" : "24px",
+          paddingRight: isMobile ? "max(10px, env(safe-area-inset-right, 0px))" : "24px",
           background: theme.colors.background,
           borderBottom: `1px solid ${theme.colors.border}`,
           flexShrink: 0,
           zIndex: 10,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? "8px" : "10px" }}>
           {isMobile && onOpenSidebar && (
             <button
               onClick={onOpenSidebar}
@@ -152,8 +159,8 @@ export default function ChatWindow({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: "36px",
-                height: "36px",
+                width: "32px",
+                height: "32px",
                 borderRadius: "8px",
                 border: "none",
                 background: "transparent",
@@ -162,14 +169,14 @@ export default function ChatWindow({
                 flexShrink: 0,
               }}
             >
-              <Menu size={20} />
+              <Menu size={18} />
             </button>
           )}
-          <IdentityMark size={15} containerSize={32} />
+          <IdentityMark size={isMobile ? 14 : 15} containerSize={isMobile ? 28 : 32} />
           <span style={{ fontFamily: theme.font.family }}>
             <span
               style={{
-                fontSize: theme.font.size.md,
+                fontSize: isMobile ? theme.font.size.sm : theme.font.size.md,
                 fontWeight: theme.font.weight.medium,
                 color: theme.colors.text,
               }}
@@ -178,7 +185,7 @@ export default function ChatWindow({
             </span>
             <span
               style={{
-                fontSize: theme.font.size.md,
+                fontSize: isMobile ? theme.font.size.sm : theme.font.size.md,
                 fontWeight: theme.font.weight.medium,
                 color: theme.colors.textSecondary,
               }}
@@ -190,8 +197,19 @@ export default function ChatWindow({
       </div>
 
       {/* Message area */}
-      <ScrollArea className="flex-1">
-        <div style={{ padding: isMobile ? "14px" : "24px" }}>
+      <ScrollArea className="flex-1 min-w-0 min-h-0 overflow-x-hidden">
+        <div
+          style={{
+            padding: isMobile ? "10px 12px" : "24px",
+            overflowWrap: "break-word",
+            wordBreak: "break-word",
+            minWidth: 0,
+            width: "100%",
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            overflowX: "hidden",
+          }}
+        >
           {messages.length === 0 ? (
             // ── Empty state ──────────────────────────────────────────────────
             <div
@@ -209,10 +227,10 @@ export default function ChatWindow({
 
               <p
                 style={{
-                  fontSize: "22px",
+                  fontSize: isMobile ? theme.font.size.lg : "22px",
                   fontWeight: theme.font.weight.semibold,
                   color: theme.colors.text,
-                  marginTop: "20px",
+                  marginTop: isMobile ? "14px" : "20px",
                   fontFamily: theme.font.family,
                   textAlign: "center",
                 }}
@@ -222,9 +240,9 @@ export default function ChatWindow({
 
               <p
                 style={{
-                  fontSize: theme.font.size.md,
+                  fontSize: isMobile ? theme.font.size.sm : theme.font.size.md,
                   color: theme.colors.textSecondary,
-                  marginTop: "10px",
+                  marginTop: isMobile ? "8px" : "10px",
                   fontFamily: theme.font.family,
                   textAlign: "center",
                   lineHeight: String(theme.font.lineHeight.relaxed),
@@ -235,7 +253,7 @@ export default function ChatWindow({
               </p>
               <p
                 style={{
-                  fontSize: theme.font.size.md,
+                  fontSize: isMobile ? theme.font.size.sm : theme.font.size.md,
                   color: theme.colors.textSecondary,
                   marginTop: "6px",
                   fontFamily: theme.font.family,
@@ -266,6 +284,7 @@ export default function ChatWindow({
                     documentVersionByToolCallId={documentVersionByToolCallId}
                     onLoadDocumentVersion={onLoadDocumentVersion}
                     isStreaming={msg.id === lastAssistantId && isStreaming}
+                    isMobile={isMobile}
                     canEditUserMessage={
                       msg.role === "user" &&
                       !!onBeginEditUserMessage &&
@@ -282,7 +301,7 @@ export default function ChatWindow({
                 const lastUser = [...messages].reverse().find(m => m.role === "user");
                 const lastUserText = (lastUser?.parts ?? []).find((p: {type?: string; text?: string}) => p.type === "text")?.text ?? "";
                 const hint = lastUserText.length > 300 ? "Analyzing role — this may take up to 20 seconds…" : "Thinking…";
-                return <TypingIndicator message={hint} />;
+                return <TypingIndicator message={hint} isMobile={isMobile} />;
               })()}
             </>
           )}
@@ -296,20 +315,21 @@ export default function ChatWindow({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "8px",
-            padding: "8px 16px",
+            gap: isMobile ? "6px" : "8px",
+            padding: isMobile ? "6px 10px" : "8px 16px",
             background: theme.colors.dangerDim,
             borderTop: `1px solid ${theme.colors.dangerBorder}`,
             flexShrink: 0,
           }}
         >
-          <AlertTriangle size={13} color={theme.colors.danger} />
+          <AlertTriangle size={isMobile ? 12 : 13} color={theme.colors.danger} />
           <span
             style={{
-              fontSize: theme.font.size.sm,
+              fontSize: isMobile ? theme.font.size.xs : theme.font.size.sm,
               color: theme.colors.danger,
               fontFamily: theme.font.family,
               flex: 1,
+              minWidth: 0,
             }}
           >
             Still working — large job analyses can take up to a minute.
@@ -318,13 +338,13 @@ export default function ChatWindow({
             <button
               onClick={onRetry}
               style={{
-                fontSize: theme.font.size.sm,
+                fontSize: isMobile ? theme.font.size.xs : theme.font.size.sm,
                 fontFamily: theme.font.family,
                 color: theme.colors.danger,
                 background: "transparent",
                 border: `1px solid ${theme.colors.dangerBorder}`,
                 borderRadius: "6px",
-                padding: "2px 10px",
+                padding: isMobile ? "2px 8px" : "2px 10px",
                 cursor: "pointer",
                 flexShrink: 0,
               }}

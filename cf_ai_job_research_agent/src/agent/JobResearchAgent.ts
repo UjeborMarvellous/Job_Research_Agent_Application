@@ -23,9 +23,7 @@ import {
   runAgentStep,
 } from "./agentSteps";
 import {
-  braveWebSearchMulti,
-  decideWebSearchQuery,
-  formatWebSearchContext,
+  runSearch,
 } from "./webSearch";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -157,99 +155,6 @@ function findRawJobDescriptionInHistory(messages: UIMessage[]): string | null {
 const GROUNDED_URL_RULE =
   "Never invent or guess URLs. You may include full https:// links only when they appear in the user's message, in web search results provided in this prompt, or in structured data (saved research, tool outputs) you were given.";
 
-/**
- * True when the user clearly wants job recommendations or listings,
- * rather than researching a specific company/role they already have.
- */
-function looksLikeJobFindingRequest(text: string): boolean {
-  const t = text.toLowerCase();
-  return (
-    /\b(?:find|get|show|give|suggest|recommend|search\s+for)\b.{0,40}\b(?:job|jobs|role|roles|position|positions|opening|openings|work|opportunit)/i.test(t) ||
-    /\b(?:job|jobs|hiring|openings?|positions?|opportunit)\b.{0,40}\b(?:match|suit|fit|for me|my skills?|my level|my background|my experience)/i.test(t) ||
-    /\b(?:what|which|any)\s+jobs?\b/i.test(t) ||
-    /\bjobs?\s+(?:that\s+)?(?:match|suit|fit)\b/i.test(t) ||
-    /\b(?:help me find|looking for\s+(?:a\s+)?job|need\s+(?:a\s+)?job|want\s+(?:a\s+)?job)\b/i.test(t)
-  );
-}
-
-/**
- * Extracts the top 2 skills/roles from the resume text for use in search queries.
- */
-function extractSearchKeywordsFromResume(resumeText: string): string {
-  const patterns = [
-    /\b(react|next\.?js|vue|angular|typescript|javascript)\b/i,
-    /\b(node\.?js|express|python|django|fastapi|go|rust|java|spring)\b/i,
-    /\b(aws|gcp|azure|cloudflare|docker|kubernetes)\b/i,
-    /\b(machine learning|ai engineer|llm|nlp|data science|deep learning)\b/i,
-    /\b(full.?stack|frontend|backend|software engineer|web developer)\b/i,
-  ];
-  const found: string[] = [];
-  for (const pat of patterns) {
-    const m = resumeText.match(pat);
-    if (m) found.push(m[0]);
-    if (found.length >= 3) break;
-  }
-  return found.join(" ").trim() || "software engineer";
-}
-
-/**
- * Builds pre-filtered job board search URLs from skills and preferences.
- * These are always valid, always show current listings — no API key needed.
- */
-function buildJobSearchLinks(
-  keywords: string,
-  wantRemote: boolean,
-  salaryMin?: number,
-): string {
-  const encoded = encodeURIComponent(keywords);
-  const locationStr = wantRemote ? "remote" : "";
-
-  const linkedin = new URL("https://www.linkedin.com/jobs/search/");
-  linkedin.searchParams.set("keywords", keywords);
-  if (wantRemote) linkedin.searchParams.set("f_WT", "2"); // remote filter
-  linkedin.searchParams.set("f_JT", "F"); // full-time
-  linkedin.searchParams.set("f_TPR", "r604800"); // posted in last 7 days
-
-  const indeed = new URL("https://www.indeed.com/jobs");
-  indeed.searchParams.set("q", keywords);
-  if (wantRemote) indeed.searchParams.set("l", "remote");
-  indeed.searchParams.set("fromage", "14"); // last 14 days
-  if (salaryMin) indeed.searchParams.set("salary", `${salaryMin}`);
-
-  const glassdoor = new URL("https://www.glassdoor.com/Job/jobs.htm");
-  glassdoor.searchParams.set("sc.keyword", keywords);
-  if (wantRemote) glassdoor.searchParams.set("remoteWorkType", "1");
-
-  const weworkremotely = wantRemote
-    ? `https://weworkremotely.com/remote-jobs/search?term=${encoded}`
-    : null;
-
-  const lines = [
-    "## Pre-Built Job Search Links",
-    "These links open live, filtered searches on major job boards — all results are real and current. Share them with the user exactly as shown.",
-    "",
-    `1. **LinkedIn Jobs** (filtered for your skills, last 7 days)`,
-    `   ${linkedin.toString()}`,
-    "",
-    `2. **Indeed** (filtered for your skills, last 14 days)`,
-    `   ${indeed.toString()}`,
-    "",
-    `3. **Glassdoor** (includes company ratings + salary data)`,
-    `   ${glassdoor.toString()}`,
-  ];
-
-  if (weworkremotely) {
-    lines.push("", `4. **We Work Remotely** (remote-only tech jobs)`);
-    lines.push(`   ${weworkremotely}`);
-  }
-
-  lines.push(
-    "",
-    "Present all of these links to the user. Tell them each link opens a pre-filtered search based on their background and preferences. Copy each URL exactly as listed — do not shorten or modify.",
-  );
-
-  return lines.join("\n");
-}
 
 /** Appended to document-generation system prompts. */
 const NO_HREF_RULE =
@@ -1265,50 +1170,14 @@ Rules:
               : "";
 
             let webBlock = "";
-            // Skip the search-decision LLM call for short generic messages
-            // that clearly won't benefit from a web lookup.
-            const needsSearchDecision =
+            const needsSearch =
               lastUser.length >= 30 ||
               /\b(?:link|url|site|website|search|find|look\s*up|where|apply|glassdoor|linkedin|careers?|news|job|jobs|hiring|opening|position|opportunit|match|salary|remote|work)\b/i.test(lastUser);
 
-            if (needsSearchDecision) {
-              await runAgentStep(writer, "Searching the web", async () => {
-                const searchDecision = await decideWebSearchQuery(
-                  model,
-                  lastUser,
-                  abortSignal,
-                  OUT.webSearchDecision,
-                );
-                const { needsSearch, query: searchQuery, query2: searchQuery2 } = searchDecision;
-                if (needsSearch && searchQuery) {
-                  const key = this.env.BRAVE_SEARCH_API_KEY;
-                  if (!key?.trim()) {
-                    webBlock =
-                      "## Web search\nLive web search is not configured on this deployment (set BRAVE_SEARCH_API_KEY). Answer from the conversation and prior context only; do not invent URLs.";
-                    return;
-                  }
-                  const queries: [string] | [string, string] = searchQuery2
-                    ? [searchQuery, searchQuery2]
-                    : [searchQuery];
-                  const hits = await braveWebSearchMulti(queries, key, abortSignal);
-                  webBlock = formatWebSearchContext(hits);
-                }
-              });
-            }
-
-            // ── Job search links: pre-built URLs, zero API cost ───────────────
-            let jobLinksBlock = "";
-            if (looksLikeJobFindingRequest(lastUser)) {
-              const resumeForSearch = (this.state as AgentState)?.resumeText ?? "";
-              const keywords = extractSearchKeywordsFromResume(resumeForSearch);
-              const wantRemote =
-                /\bremote\b/i.test(lastUser) || /\bremote\b/i.test(resumeForSearch);
-              const salaryMatch = lastUser.match(/\$?(\d{2,3})k?\b/i);
-              const salaryMin = salaryMatch
-                ? parseInt(salaryMatch[1]) * 1000
-                : undefined;
-              await runAgentStep(writer, "Finding matching jobs", async () => {
-                jobLinksBlock = buildJobSearchLinks(keywords, wantRemote, salaryMin);
+            if (needsSearch) {
+              await runAgentStep(writer, "Searching for live results", async () => {
+                const result = await runSearch(lastUser, this.env, abortSignal);
+                if (result.block) webBlock = result.block;
               });
             }
 
@@ -1348,17 +1217,16 @@ Read the full conversation history carefully and answer the user's follow-up que
               system = `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
 
 CRITICAL RULES — follow without exception:
-1. NEVER invent or fabricate specific job listing URLs. Only use URLs that appear in the "Pre-Built Job Search Links" or "Web search results" sections below.
-2. If job search links ARE provided below: present ALL of them clearly to the user, one per line, with a brief label. Tell the user each link opens a real, pre-filtered search tailored to their background.
-3. If NO job links are provided below and the user asks for job listings: suggest they paste a job description for a detailed analysis, or share their target role/industry so you can guide them better.
+1. NEVER invent or fabricate job listing URLs. Only use URLs that appear in the "Live job listings" or "Web search results" sections below.
+2. If live job listings ARE provided below: present ALL of them clearly to the user — title, company, location, and apply link. Tell the user these are real, active postings pulled right now from LinkedIn, Indeed, Glassdoor, and other major boards.
+3. If NO live listings are provided below and the user asks for jobs: suggest they paste a job description for a detailed analysis, or share their target role/industry so you can search better.
 4. NEVER generate sample job descriptions, sample cover letters, sample resumes, or any fabricated "example" content in the chat. If the user asks for a cover letter or document without uploading their resume first, warmly invite them to upload their resume and paste a job description — do not produce fake sample content.
 
 The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
             }
 
             const webSection = webBlock ? `\n\n${webBlock}` : "";
-            const jobSection = jobLinksBlock ? `\n\n${jobLinksBlock}` : "";
-            system = `${system}${webSection}${jobSection}\n\n${GROUNDED_URL_RULE}`;
+            system = `${system}${webSection}\n\n${GROUNDED_URL_RULE}`;
 
             const threadHint = ctx?.analysis
               ? `Follow-up about ${ctx.jobTitle} at ${ctx.company}`

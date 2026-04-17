@@ -86,12 +86,18 @@ export default function InputBar({
     <div
       style={{
         flexShrink: 0,
-        padding: isMobile ? "8px 10px 10px" : "10px 14px 14px",
+        minWidth: 0,
+        width: "100%",
+        maxWidth: "100%",
+        padding: isMobile
+          ? `6px 8px max(8px, env(safe-area-inset-bottom, 0px))`
+          : "10px 14px 14px",
         display: "flex",
         flexDirection: "column",
-        gap: "8px",
+        gap: isMobile ? "6px" : "8px",
         background: theme.colors.background,
         borderTop: `1px solid ${theme.colors.border}`,
+        boxSizing: "border-box",
       }}
     >
       {/* Resume chip */}
@@ -101,28 +107,28 @@ export default function InputBar({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: "6px",
-              height: "28px",
-              padding: "0 4px 0 10px",
+              gap: isMobile ? "4px" : "6px",
+              height: isMobile ? "26px" : "28px",
+              padding: isMobile ? "0 4px 0 8px" : "0 4px 0 10px",
               background: theme.colors.surface,
               border: `1px solid ${theme.colors.border}`,
               borderRadius: "20px",
-              maxWidth: "260px",
+              maxWidth: isMobile ? "min(100%, 220px)" : "260px",
               boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
               flexShrink: 0,
             }}
           >
-            <FileText size={12} color={theme.colors.textSecondary} style={{ flexShrink: 0 }} />
+            <FileText size={isMobile ? 11 : 12} color={theme.colors.textSecondary} style={{ flexShrink: 0 }} />
             <span
               style={{
-                fontSize: theme.font.size.sm,
+                fontSize: isMobile ? theme.font.size.xs : theme.font.size.sm,
                 fontFamily: theme.font.family,
                 color: theme.colors.text,
                 fontWeight: theme.font.weight.medium,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                maxWidth: "180px",
+                maxWidth: isMobile ? "140px" : "180px",
               }}
             >
               {resumeFileName ?? pendingResumeFileName}
@@ -167,13 +173,16 @@ export default function InputBar({
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
-          gap: "6px",
+          minWidth: 0,
+          width: "100%",
+          maxWidth: "100%",
+          gap: isMobile ? "4px" : "6px",
           background: theme.colors.surface,
           border: focused
             ? `1.5px solid ${theme.colors.text}`
             : `1px solid ${theme.colors.border}`,
-          borderRadius: "16px",
-          padding: "8px 8px 8px 12px",
+          borderRadius: isMobile ? "14px" : "16px",
+          padding: isMobile ? "6px 6px 6px 8px" : "8px 8px 8px 12px",
           transition: "border-color 150ms ease, box-shadow 150ms ease",
           boxShadow: focused
             ? "0 0 0 4px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.10)"
@@ -198,8 +207,8 @@ export default function InputBar({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: "28px",
-            height: "28px",
+            width: isMobile ? "26px" : "28px",
+            height: isMobile ? "26px" : "28px",
             borderRadius: "8px",
             border: "none",
             background: "transparent",
@@ -221,8 +230,8 @@ export default function InputBar({
           }}
         >
           {parsing
-            ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} />
-            : <Paperclip size={15} />
+            ? <Loader2 size={isMobile ? 14 : 15} style={{ animation: "spin 1s linear infinite" }} />
+            : <Paperclip size={isMobile ? 14 : 15} />
           }
         </button>
 
@@ -237,7 +246,10 @@ export default function InputBar({
           placeholder="Paste a job description, company name, or question..."
           rows={1}
           style={{
-            flex: 1,
+            flex: "1 1 0",
+            minWidth: 0,
+            width: "100%",
+            maxWidth: "100%",
             background: "transparent",
             border: "none",
             outline: "none",
@@ -251,6 +263,8 @@ export default function InputBar({
             padding: "0",
             margin: "0",
             verticalAlign: "middle",
+            overflowWrap: "break-word",
+            wordBreak: "break-word",
           }}
         />
 
@@ -264,9 +278,9 @@ export default function InputBar({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            width: "30px",
-            height: "30px",
-            borderRadius: "10px",
+            width: isMobile ? "28px" : "30px",
+            height: isMobile ? "28px" : "30px",
+            borderRadius: isMobile ? "8px" : "10px",
             border: "none",
             background: canSend ? theme.colors.text : theme.colors.surfaceElevated,
             cursor: canSend ? "pointer" : "not-allowed",
@@ -282,8 +296,8 @@ export default function InputBar({
           }}
         >
           {disabled
-            ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
-            : <ArrowUp size={14} />
+            ? <Loader2 size={isMobile ? 13 : 14} style={{ animation: "spin 1s linear infinite" }} />
+            : <ArrowUp size={isMobile ? 13 : 14} />
           }
         </button>
       </div>

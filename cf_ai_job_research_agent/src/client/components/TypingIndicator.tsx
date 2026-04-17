@@ -4,16 +4,17 @@ import { theme } from "../types";
 
 interface TypingIndicatorProps {
   message?: string;
+  isMobile?: boolean;
 }
 
-export default function TypingIndicator({ message = "Thinking…" }: TypingIndicatorProps) {
+export default function TypingIndicator({ message = "Thinking…", isMobile }: TypingIndicatorProps) {
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "row",
-        gap: "10px",
-        padding: "10px 0",
+        gap: isMobile ? "8px" : "10px",
+        padding: isMobile ? "6px 0" : "10px 0",
         alignItems: "center",
         animation: "fadeSlideUp 200ms ease forwards",
       }}
@@ -36,7 +37,7 @@ export default function TypingIndicator({ message = "Thinking…" }: TypingIndic
 
       <ShimmerText
         style={{
-          fontSize: theme.font.size.sm,
+          fontSize: isMobile ? theme.font.size.xs : theme.font.size.sm,
           fontFamily: theme.font.family,
         }}
       >
