@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { Flex, Box } from "@chakra-ui/react";
 import { X } from "lucide-react";
 import useJobAgent from "./hooks/useJobAgent";
@@ -7,7 +7,7 @@ import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import DocumentEditor from "./components/DocumentEditor";
 import { theme } from "./types";
-import type { ConversationMeta } from "./types";
+import type { AgentState, ConversationMeta, DocumentSnapshot, UIMessage } from "./types";
 import { getUserMessagePlainTextForComposer } from "./utils/userMessageComposerText";
 
 function MobileSidebarDrawer({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
@@ -100,7 +100,6 @@ interface OpenDocument {
 }
 
 interface ChatSessionProps {
-  sessionId: string;
   onTitleUpdate: (title: string) => void;
   onResumeStateChange: (fileName: string | undefined) => void;
   onOpenDocument: (doc: { title: string; content: string }) => void;
@@ -117,10 +116,17 @@ interface ChatSessionProps {
   onUserSend: () => void;
   isMobile?: boolean;
   onOpenSidebar?: () => void;
+  messages: UIMessage[];
+  sendMessage: (message: { text: string }) => void;
+  setMessages: Dispatch<SetStateAction<UIMessage[]>>;
+  agentState: AgentState;
+  isStreaming: boolean;
+  onLoadDocumentVersion: (versionedDocumentId: string) => void;
+  documentVersionMap: Record<string, DocumentSnapshot>;
+  documentVersionByToolCallId: Record<string, string>;
 }
 
 function ChatSession({
-  sessionId,
   onTitleUpdate,
   onResumeStateChange,
   onOpenDocument,
@@ -137,9 +143,15 @@ function ChatSession({
   onUserSend,
   isMobile,
   onOpenSidebar,
+  messages,
+  sendMessage,
+  setMessages,
+  agentState,
+  isStreaming,
+  onLoadDocumentVersion,
+  documentVersionMap,
+  documentVersionByToolCallId,
 }: ChatSessionProps) {
-  const { messages, sendMessage, setMessages, agentState, isStreaming } =
-    useJobAgent(sessionId);
 
   const [suppressServerResumeChip, setSuppressServerResumeChip] = useState(false);
   const [composerSeed, setComposerSeed] = useState<{ text: string; nonce: number } | null>(null);
@@ -266,6 +278,9 @@ function ChatSession({
       onRetry={handleRetry}
       onOpenDocument={onOpenDocument}
       stateDocContent={agentState.lastGeneratedDocument?.content ?? null}
+      documentVersionMap={documentVersionMap}
+      documentVersionByToolCallId={documentVersionByToolCallId}
+      onLoadDocumentVersion={onLoadDocumentVersion}
       resumeFileName={suppressServerResumeChip ? undefined : resumeFileName}
       onResumeExtracted={onResumeExtracted}
       onResumeRemove={onResumeRemove}
@@ -303,6 +318,9 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>(() =>
     loadActiveSession(conversations),
   );
+
+  const { messages, sendMessage, setMessages, agentState, isStreaming } =
+    useJobAgent(activeSessionId);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [uploadedResumeFileName, setUploadedResumeFileName] = useState<string | undefined>();
@@ -452,6 +470,29 @@ export default function App() {
     setActiveDocumentId(id);
   }, []);
 
+  const documentVersionMap = agentState.documentVersionMap ?? {};
+  const documentVersionByToolCallId = agentState.documentVersionByToolCallId ?? {};
+
+  const handleLoadVersionById = useCallback(
+    (versionedDocumentId: string) => {
+      const snap = documentVersionMap[versionedDocumentId];
+      if (!snap?.content) return;
+      setOpenDocuments((prev) => {
+        const existing = prev.find((d) => d.title === snap.title);
+        if (existing) {
+          setActiveDocumentId(existing.id);
+          return prev.map((d) =>
+            d.id === existing.id ? { ...d, content: snap.content, title: snap.title } : d,
+          );
+        }
+        const newDoc = { id: crypto.randomUUID(), title: snap.title, content: snap.content };
+        setActiveDocumentId(newDoc.id);
+        return [...prev, newDoc];
+      });
+    },
+    [documentVersionMap],
+  );
+
   // Fix 3 — called by ChatSession when agent pushes new content for the active doc
   const handleUpdateActiveDocument = useCallback(
     (content: string) => {
@@ -525,7 +566,6 @@ export default function App() {
       >
         <ChatSession
           key={activeSessionId}
-          sessionId={activeSessionId}
           onTitleUpdate={handleTitleUpdate}
           onResumeStateChange={handleResumeStateChange}
           onOpenDocument={handleOpenDocument}
@@ -542,6 +582,14 @@ export default function App() {
           onUserSend={handleUserSend}
           isMobile={isMobile}
           onOpenSidebar={() => setMobileDrawerOpen(true)}
+          messages={messages}
+          sendMessage={sendMessage}
+          setMessages={setMessages}
+          agentState={agentState}
+          isStreaming={isStreaming}
+          onLoadDocumentVersion={handleLoadVersionById}
+          documentVersionMap={documentVersionMap}
+          documentVersionByToolCallId={documentVersionByToolCallId}
         />
       </Box>
 

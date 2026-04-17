@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { Loader2, FileText, ExternalLink, Pencil, Copy, Check } from "lucide-react";
 import { getToolName, isToolUIPart } from "ai";
 import { theme } from "../types";
-import type { UIMessage, JobAnalysis } from "../types";
+import type { UIMessage, JobAnalysis, DocumentSnapshot } from "../types";
 import AgentStepRow from "./AgentStepRow";
 import ResearchCard from "./ResearchCard";
 import { Button } from "./ui/button";
@@ -195,6 +195,12 @@ interface MessageBubbleProps {
   onOpenDocument?: (doc: { title: string; content: string }) => void;
   /** Full document from DO state — used instead of (possibly truncated) message part content. */
   stateDocContent?: string | null;
+  /** Snapshots from agent state; keyed by tool output `versionedDocumentId`. */
+  documentVersionMap?: Record<string, DocumentSnapshot>;
+  /** toolCallId → snapshot id when `output.versionedDocumentId` is missing. */
+  documentVersionByToolCallId?: Record<string, string>;
+  /** Opens the editor to the snapshot for this tool part (preferred over raw message content). */
+  onLoadDocumentVersion?: (versionedDocumentId: string) => void;
   canEditUserMessage?: boolean;
   onEditUserMessage?: (messageIndex: number) => void;
 }
@@ -216,6 +222,9 @@ function MessageBubble({
   messageIndex,
   onOpenDocument,
   stateDocContent,
+  documentVersionMap = {},
+  documentVersionByToolCallId = {},
+  onLoadDocumentVersion,
   canEditUserMessage,
   onEditUserMessage,
 }: MessageBubbleProps) {
@@ -520,25 +529,88 @@ function MessageBubble({
               documentType?: string;
               documentRevision?: boolean;
             };
-            const output = aiPart.output as { content?: string; format?: string };
+            const output = aiPart.output as {
+              content?: string;
+              format?: string;
+              versionedDocumentId?: string;
+            };
             const title = input?.title ?? "Document";
-            const content = stateDocContent ?? output?.content ?? "";
+            const toolCallId =
+              typeof (aiPart as { toolCallId?: string }).toolCallId === "string"
+                ? (aiPart as { toolCallId: string }).toolCallId
+                : "";
+            const idFromOutput =
+              typeof output?.versionedDocumentId === "string" ? output.versionedDocumentId.trim() : "";
+            const idFromToolCall =
+              toolCallId && documentVersionByToolCallId[toolCallId]
+                ? documentVersionByToolCallId[toolCallId]
+                : "";
+            const versionedDocumentId = idFromOutput || idFromToolCall;
+            const mapped = versionedDocumentId ? documentVersionMap[versionedDocumentId] : undefined;
+            const content =
+              mapped?.content ?? output?.content ?? stateDocContent ?? "";
             const isRevision = input?.documentRevision === true;
+
+            const canOpenVersion =
+              !!versionedDocumentId &&
+              typeof onLoadDocumentVersion === "function" &&
+              !!documentVersionMap[versionedDocumentId]?.content;
+            const openThisDocument = () => {
+              if (canOpenVersion) onLoadDocumentVersion!(versionedDocumentId);
+              else if (onOpenDocument && content) onOpenDocument({ title, content });
+            };
+            const interactive = canOpenVersion || (!!onOpenDocument && !!content);
+            const cardShellStyle: CSSProperties = {
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: isRevision ? "8px 12px" : "10px 14px",
+              marginTop: "8px",
+              background: theme.colors.surface,
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radius.md,
+              ...(interactive
+                ? {
+                    cursor: "pointer",
+                    transition: "background 120ms ease, box-shadow 120ms ease",
+                  }
+                : {}),
+            };
 
             if (isRevision) {
               toolElements.push(
                 <div
                   key={`d-${index}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    padding: "8px 12px",
-                    marginTop: "8px",
-                    background: theme.colors.surface,
-                    border: `1px solid ${theme.colors.border}`,
-                    borderRadius: theme.radius.md,
-                  }}
+                  role={interactive ? "button" : undefined}
+                  tabIndex={interactive ? 0 : undefined}
+                  onClick={interactive ? openThisDocument : undefined}
+                  onKeyDown={
+                    interactive
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openThisDocument();
+                          }
+                        }
+                      : undefined
+                  }
+                  style={cardShellStyle}
+                  onMouseEnter={
+                    interactive
+                      ? (e) => {
+                          (e.currentTarget as HTMLDivElement).style.background =
+                            theme.colors.surfaceHover;
+                        }
+                      : undefined
+                  }
+                  onMouseLeave={
+                    interactive
+                      ? (e) => {
+                          (e.currentTarget as HTMLDivElement).style.background =
+                            theme.colors.surface;
+                        }
+                      : undefined
+                  }
                 >
                   <FileText size={15} color={theme.colors.success} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -563,25 +635,60 @@ function MessageBubble({
                         marginTop: "2px",
                       }}
                     >
-                      Revised in your open editor
+                      {canOpenVersion
+                        ? "Click to view this version in the editor"
+                        : "Revised in your open editor"}
                     </p>
                   </div>
+                  {canOpenVersion && (
+                    <span
+                      style={{
+                        fontSize: theme.font.size.xs,
+                        fontWeight: theme.font.weight.medium,
+                        color: theme.colors.textSecondary,
+                        fontFamily: theme.font.family,
+                        flexShrink: 0,
+                      }}
+                    >
+                      View version
+                    </span>
+                  )}
                 </div>,
               );
             } else {
               toolElements.push(
                 <div
                   key={`d-${index}`}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    padding: "10px 14px",
-                    marginTop: "8px",
-                    background: theme.colors.surface,
-                    border: `1px solid ${theme.colors.border}`,
-                    borderRadius: theme.radius.md,
-                  }}
+                  role={interactive ? "button" : undefined}
+                  tabIndex={interactive ? 0 : undefined}
+                  onClick={interactive ? openThisDocument : undefined}
+                  onKeyDown={
+                    interactive
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openThisDocument();
+                          }
+                        }
+                      : undefined
+                  }
+                  style={cardShellStyle}
+                  onMouseEnter={
+                    interactive
+                      ? (e) => {
+                          (e.currentTarget as HTMLDivElement).style.background =
+                            theme.colors.surfaceHover;
+                        }
+                      : undefined
+                  }
+                  onMouseLeave={
+                    interactive
+                      ? (e) => {
+                          (e.currentTarget as HTMLDivElement).style.background =
+                            theme.colors.surface;
+                        }
+                      : undefined
+                  }
                 >
                   <FileText size={16} color={theme.colors.textSecondary} />
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -598,19 +705,31 @@ function MessageBubble({
                     >
                       {title}
                     </p>
-                    <p style={{ fontSize: theme.font.size.xs, color: theme.colors.textMuted, fontFamily: theme.font.family, marginTop: "2px" }}>
-                      Ready to edit and export
+                    <p
+                      style={{
+                        fontSize: theme.font.size.xs,
+                        color: theme.colors.textMuted,
+                        fontFamily: theme.font.family,
+                        marginTop: "2px",
+                      }}
+                    >
+                      {canOpenVersion
+                        ? "Click to open this version in the editor"
+                        : "Ready to edit and export"}
                     </p>
                   </div>
-                  {onOpenDocument && (
+                  {onOpenDocument && content && (
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => onOpenDocument({ title, content })}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openThisDocument();
+                      }}
                       className="gap-1.5 shrink-0"
                     >
                       <ExternalLink size={11} />
-                      Open in Editor
+                      {canOpenVersion ? "View version" : "Open in Editor"}
                     </Button>
                   )}
                 </div>,

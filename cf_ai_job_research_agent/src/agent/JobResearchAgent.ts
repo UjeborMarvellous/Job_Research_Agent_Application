@@ -14,7 +14,8 @@ import {
   type UIMessageStreamWriter,
 } from "ai";
 import { z } from "zod";
-import type { AgentState, ResearchEntry } from "../client/types";
+import type { AgentState, DocumentSnapshot, ResearchEntry } from "../client/types";
+import { computeDocumentVersionId } from "../client/utils/documentVersionId";
 import {
   AGENT_STEP_TOOL_NAME,
   beginAgentStep,
@@ -80,6 +81,16 @@ const GENERIC_COVER_ASSISTANT_REPLY =
 /** Shown after the user pastes a JD and the editor is updated with a tailored letter. */
 const PERSONALIZED_COVER_AFTER_JD_REPLY =
   "I've updated your cover letter in the editor for this role. Review the research card above for details.";
+
+/**
+ * Prepended to every conversational system prompt.
+ * Gives the agent a consistent warm, human voice and prevents LLM self-identification phrases.
+ */
+const PERSONA_RULE =
+  "You have a warm, confident personality — speak like a knowledgeable career advisor who genuinely cares about the user's success. " +
+  "Be direct, encouraging, and human. Use first person naturally (e.g. 'I'd love to help', 'I noticed', 'Here's what I found'). " +
+  "NEVER say 'I am a large language model', 'As an AI', 'I don't have feelings', or any similar phrase. " +
+  "You have opinions and can express enthusiasm, concern, or excitement where appropriate.";
 
 /**
  * Truncate a string to maxChars, appending "..." if cut.
@@ -570,13 +581,28 @@ function getConversationJobContext(
 }
 
 /**
- * Scan the message thread backwards for the last assistant turn that contained
- * a generateDocument tool part with output available. Returns the document
- * title, content, and documentType, or null if none found.
+ * Latest document for revision / heuristics: prefer authoritative DO state, then
+ * resolve tool parts via `versionedDocumentId` + {@link AgentState.documentVersionMap}
+ * when message bodies are truncated.
  */
 function getLastGeneratedDocument(
   uiMessages: UIMessage[],
-): { title: string; content: string; documentType: string } | null {
+  state?: AgentState | null,
+): {
+  title: string;
+  content: string;
+  documentType: string;
+  documentId?: string;
+} | null {
+  const fromState = state?.lastGeneratedDocument;
+  if (fromState?.content) {
+    return {
+      title: fromState.title,
+      content: fromState.content,
+      documentType: fromState.documentType,
+      documentId: fromState.documentId,
+    };
+  }
   for (let i = uiMessages.length - 1; i >= 0; i--) {
     const m = uiMessages[i];
     if (m.role !== "assistant") continue;
@@ -585,14 +611,36 @@ function getLastGeneratedDocument(
         typeof part.type === "string" &&
         part.type === "tool-generateDocument"
       ) {
-        const output = (part as { output?: { content?: string; format?: string } }).output;
-        const input = (part as { input?: { title?: string; documentType?: string } }).input;
-        if (output?.content) {
-          return {
-            title: input?.title ?? "Document",
-            content: output.content,
-            documentType: input?.documentType ?? "cover-letter",
+        const output = (part as {
+          output?: {
+            content?: string;
+            format?: string;
+            versionedDocumentId?: string;
           };
+        }).output;
+        const input = (part as { input?: { title?: string; documentType?: string } }).input;
+        const toolCallId =
+          typeof (part as { toolCallId?: string }).toolCallId === "string"
+            ? (part as { toolCallId: string }).toolCallId
+            : "";
+        const vidFromLink =
+          toolCallId && state?.documentVersionByToolCallId?.[toolCallId]
+            ? state.documentVersionByToolCallId[toolCallId]
+            : "";
+        const vid = output?.versionedDocumentId || vidFromLink || undefined;
+        const mapped = vid ? state?.documentVersionMap?.[vid] : undefined;
+        let content = "";
+        let title = input?.title ?? "Document";
+        let documentType = input?.documentType ?? "cover-letter";
+        if (mapped) {
+          content = mapped.content;
+          title = mapped.title;
+          documentType = mapped.documentType;
+        } else if (output?.content) {
+          content = output.content;
+        }
+        if (content) {
+          return { title, content, documentType, documentId: vid };
         }
       }
     }
@@ -759,7 +807,48 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
     sidebarTitle: undefined,
     sidebarTitleFinalized: false,
     awaitingPersonalizedCoverLetter: false,
+    documentVersionMap: {},
+    documentVersionByToolCallId: {},
   };
+
+  /**
+   * Append an immutable snapshot and point {@link AgentState.lastGeneratedDocument} at it.
+   * Returns the snapshot id for tool output / chat references.
+   * @param toolCallLinkId When set, records `toolCallId → documentId` so the client can resolve
+   * versions even if custom fields are stripped from persisted tool `output`.
+   */
+  private async persistDocumentSnapshot(
+    meta: { title: string; content: string; documentType: string },
+    extra?: Partial<Pick<AgentState, "awaitingPersonalizedCoverLetter">>,
+    toolCallLinkId?: string,
+  ): Promise<string> {
+    const documentId = await computeDocumentVersionId(meta.content);
+    const snapshot: DocumentSnapshot = {
+      content: meta.content,
+      timestamp: new Date().toISOString(),
+      title: meta.title,
+      documentType: meta.documentType,
+    };
+    const prevMap = { ...(this.state.documentVersionMap ?? {}) };
+    prevMap[documentId] = snapshot;
+    const prevByCall = { ...(this.state.documentVersionByToolCallId ?? {}) };
+    if (toolCallLinkId) {
+      prevByCall[toolCallLinkId] = documentId;
+    }
+    await this.setState({
+      ...this.state,
+      ...extra,
+      documentVersionMap: prevMap,
+      documentVersionByToolCallId: prevByCall,
+      lastGeneratedDocument: {
+        title: meta.title,
+        content: meta.content,
+        documentType: meta.documentType,
+        documentId,
+      },
+    });
+    return documentId;
+  }
 
   private async persistSidebarTitle(title: string): Promise<void> {
     const clipped = clipSidebarTitle(title);
@@ -920,7 +1009,7 @@ Rules:
           model,
           temperature: 0.7,
           maxOutputTokens: OUT.streamShort,
-          system: `You are a job application research assistant. The user tried to upload a resume but you could not read its contents. Ask them to copy-paste the resume text or try a different file format (plain text or PDF). Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`,
+          system: `${PERSONA_RULE}\n\nYou are a job application research assistant. The user tried to upload a resume but you could not read its contents. Ask them to copy-paste the resume text or try a different file format (plain text or PDF). Be concise (2–3 sentences). ${GROUNDED_URL_RULE}`,
           messages: [
             { role: "user", content: `I uploaded my resume: ${resumeTag.fileName}` },
           ],
@@ -937,8 +1026,8 @@ Rules:
           temperature: 0.7,
           maxOutputTokens: OUT.streamShort,
           system: hadResume
-            ? `You are a job application research assistant. The user just replaced their previously uploaded resume with a new one. You successfully read the resume. Briefly confirm what key details you noticed (name, role/skills if visible) and that it will now be used for cover letters, email drafts, and CV tips. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`
-            : `You are a job application research assistant. The user just uploaded their resume. You successfully read it. Briefly confirm what key details you noticed (name, role/skills if visible) and mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`,
+            ? `${PERSONA_RULE}\n\nYou are a job application research assistant. The user just replaced their previously uploaded resume with a new one. You successfully read the resume. Briefly confirm what key details you noticed (name, role/skills if visible) and that it will now be used for cover letters, email drafts, and CV tips. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`
+            : `${PERSONA_RULE}\n\nYou are a job application research assistant. The user just uploaded their resume. You successfully read it. Briefly confirm what key details you noticed (name, role/skills if visible) and mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`,
           messages: [
             {
               role: "user",
@@ -963,7 +1052,8 @@ Rules:
           writer.write({ type: "start" });
 
           const jobHeuristic = looksLikeJobPosting(textToClassify);
-          const hasGeneratedDocument = getLastGeneratedDocument(uiMessages) !== null;
+          const hasGeneratedDocument =
+            getLastGeneratedDocument(uiMessages, this.state as AgentState) !== null;
           const hasJobContext = getConversationJobContext(uiMessages, savedEntries) !== null;
           const hasResume = !!((this.state as AgentState)?.resumeText);
           let classified!: z.infer<typeof intentSchema>;
@@ -999,7 +1089,10 @@ Rules:
                 } else {
                   const docRequestType = looksLikeDocumentRequest(textToClassify);
                   const hasRawJdInHistory = !hasJobContext && findRawJobDescriptionInHistory(uiMessages) !== null;
-                  const lastDocMeta = getLastGeneratedDocument(uiMessages);
+                  const lastDocMeta = getLastGeneratedDocument(
+                    uiMessages,
+                    this.state as AgentState,
+                  );
 
                   if (hasGeneratedDocument && looksLikeRevisionRequest(textToClassify) && hasResume) {
                     const dtype = normalizeDocType(
@@ -1067,7 +1160,7 @@ Rules:
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
-                system: `You are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again. ${GROUNDED_URL_RULE}`,
+                system: `${PERSONA_RULE}\n\nYou are a job application research assistant. The requested saved research could not be found. Ask the user to paste the job posting again. ${GROUNDED_URL_RULE}`,
                 messages: modelMessages,
                 abortSignal,
                 onFinish: async (evt) => {
@@ -1115,7 +1208,7 @@ Rules:
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
+              system: `${PERSONA_RULE}\n\nYou are a concise career coach. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -1149,7 +1242,7 @@ Rules:
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamReply,
-              system: `You are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise. ${GROUNDED_URL_RULE}`,
+              system: `${PERSONA_RULE}\n\nYou are a job application research assistant. The user asked about their saved research. Here is the saved list as JSON (may be empty):\n${JSON.stringify(researches.map((r) => ({ company: r.company, jobTitle: r.jobTitle, timestamp: r.timestamp, summary: r.summary })), null, 2)}\n\nList each entry clearly with company, job title, and how long ago it was saved. If empty, say nothing has been saved yet. Be concise. ${GROUNDED_URL_RULE}`,
               messages: modelMessages,
               abortSignal,
               onFinish: async (evt) => {
@@ -1222,7 +1315,7 @@ Rules:
             let system: string;
 
             if (ctx?.analysis) {
-              system = `You are an expert career coach helping a job applicant.
+              system = `${PERSONA_RULE}\n\nYou are an expert career coach helping a job applicant.
 You have already analyzed the following role for them:
 
 Role: ${ctx.jobTitle} at ${ctx.company}
@@ -1248,11 +1341,11 @@ ${resumeSnippet}
 
 The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked.`;
             } else if (ctx) {
-              system = `You are an expert career coach helping a job applicant.
+              system = `${PERSONA_RULE}\n\nYou are an expert career coach helping a job applicant.
 Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
 Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet}`;
             } else {
-              system = `You are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
+              system = `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
 
 CRITICAL RULES — follow without exception:
 1. NEVER invent or fabricate specific job listing URLs. Only use URLs that appear in the "Pre-Built Job Search Links" or "Web search results" sections below.
@@ -1323,7 +1416,7 @@ The user can paste a job description to get a detailed analysis. They currently 
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamShort,
-                system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
+                system: `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
                 messages: [{ role: "user", content: hint }],
                 abortSignal,
                 onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
@@ -1341,7 +1434,7 @@ The user can paste a job description to get a detailed analysis. They currently 
                   model,
                   temperature: 0.7,
                   maxOutputTokens: OUT.streamShort,
-                  system: `You are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
+                  system: `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
                   messages: [
                     {
                       role: "user",
@@ -1390,16 +1483,17 @@ The user can paste a job description to get a detailed analysis. They currently 
               });
 
               await this.persistSidebarTitle(genericTitle);
+              let genericVersionId = "";
               try {
-                await this.setState({
-                  ...this.state,
-                  lastGeneratedDocument: {
+                genericVersionId = await this.persistDocumentSnapshot(
+                  {
                     title: genericTitle,
                     content: genericHtml,
                     documentType: "cover-letter",
                   },
-                  awaitingPersonalizedCoverLetter: true,
-                });
+                  { awaitingPersonalizedCoverLetter: true },
+                  genToolId,
+                );
               } catch (e) {
                 console.error("persist lastGeneratedDocument (generic):", e);
               }
@@ -1407,7 +1501,11 @@ The user can paste a job description to get a detailed analysis. They currently 
               writer.write({
                 type: "tool-output-available",
                 toolCallId: genToolId,
-                output: { content: genericHtml, format: "html" },
+                output: {
+                  content: genericHtml,
+                  format: "html",
+                  versionedDocumentId: genericVersionId,
+                },
                 providerExecuted: true,
               });
 
@@ -1459,9 +1557,9 @@ The user can paste a job description to get a detailed analysis. They currently 
               : docLabel;
 
             const systemPrompts: Record<string, string> = {
-              "cover-letter": `You are a professional cover letter writer. Write a compelling, personalized cover letter for the candidate applying to this role. Use their resume details and the job analysis to tailor every paragraph. Output the cover letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML. ${NO_HREF_RULE}`,
-              email: `You are a professional email drafter. Write a concise, professional application email for the candidate to send when applying to this role. Use their resume and the job analysis to personalize it. Output the email in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble — output ONLY the email HTML. ${NO_HREF_RULE}`,
-              "cv-tips": `You are an expert CV/resume consultant. Based on the job requirements and the candidate's current resume, provide specific, actionable tips to improve their CV for this exact role. Format as HTML with headings (<h3>), bullet lists (<ul><li>), and bold text (<strong>) for key points. Do NOT include preamble — output ONLY the tips HTML. ${NO_HREF_RULE}`,
+              "cover-letter": `${PERSONA_RULE}\n\nYou are a professional cover letter writer. Write a compelling, personalized cover letter for the candidate applying to this role. Use their resume details and the job analysis to tailor every paragraph. Output the cover letter in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble or explanation — output ONLY the cover letter HTML. ${NO_HREF_RULE}`,
+              email: `${PERSONA_RULE}\n\nYou are a professional email drafter. Write a concise, professional application email for the candidate to send when applying to this role. Use their resume and the job analysis to personalize it. Output the email in clean HTML (use <p>, <strong>, <em>, <br> tags). Do NOT include any preamble — output ONLY the email HTML. ${NO_HREF_RULE}`,
+              "cv-tips": `${PERSONA_RULE}\n\nYou are an expert CV/resume consultant. Based on the job requirements and the candidate's current resume, provide specific, actionable tips to improve their CV for this exact role. Format as HTML with headings (<h3>), bullet lists (<ul><li>), and bold text (<strong>) for key points. Do NOT include preamble — output ONLY the tips HTML. ${NO_HREF_RULE}`,
             };
 
             await runAgentStep(writer, "Gathering job and resume context", async () => {
@@ -1495,14 +1593,13 @@ The user can paste a job description to get a detailed analysis. They currently 
 
             await this.persistSidebarTitle(docTitle);
 
-            // Persist full document to DO state — message storage truncates large
-            // tool outputs, so the client reads the full content from state instead.
+            let docVersionId = "";
             try {
-              await this.setState({
-                ...this.state,
-                lastGeneratedDocument: { title: docTitle, content: fullContent, documentType: docType },
-                awaitingPersonalizedCoverLetter: false,
-              });
+              docVersionId = await this.persistDocumentSnapshot(
+                { title: docTitle, content: fullContent, documentType: docType },
+                { awaitingPersonalizedCoverLetter: false },
+                genToolId,
+              );
             } catch (e) {
               console.error("persist lastGeneratedDocument:", e);
             }
@@ -1510,7 +1607,11 @@ The user can paste a job description to get a detailed analysis. They currently 
             writer.write({
               type: "tool-output-available",
               toolCallId: genToolId,
-              output: { content: fullContent, format: "html" },
+              output: {
+                content: fullContent,
+                format: "html",
+                versionedDocumentId: docVersionId,
+              },
               providerExecuted: true,
             });
 
@@ -1519,7 +1620,7 @@ The user can paste a job description to get a detailed analysis. They currently 
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
+              system: `${PERSONA_RULE}\n\nYou are a concise career coach. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -1540,7 +1641,10 @@ The user can paste a job description to get a detailed analysis. They currently 
 
           // ── update-document ─────────────────────────────────────────────────
           if (intent === "update-document") {
-            const existingDoc = getLastGeneratedDocument(uiMessages);
+            const existingDoc = getLastGeneratedDocument(
+              uiMessages,
+              this.state as AgentState,
+            );
 
             if (!existingDoc) {
               // No prior document — let the model explain
@@ -1556,7 +1660,7 @@ The user can paste a job description to get a detailed analysis. They currently 
                 model,
                 temperature: 0.7,
                 maxOutputTokens: OUT.streamReply,
-                system: `You are a helpful job application research assistant. The user asked to update a document, but no document has been generated yet in this conversation. Let them know politely and offer to generate one for them. ${GROUNDED_URL_RULE}`,
+                system: `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. The user asked to update a document, but no document has been generated yet in this conversation. Let them know politely and offer to generate one for them. ${GROUNDED_URL_RULE}`,
                 messages: modelMessages,
                 abortSignal,
                 onFinish: async (evt) => {
@@ -1660,17 +1764,17 @@ The user can paste a job description to get a detailed analysis. They currently 
               }
             }
 
-            // Persist revised document to DO state (bypasses message truncation)
+            let revVersionId = "";
             try {
-              await this.setState({
-                ...this.state,
-                lastGeneratedDocument: {
+              revVersionId = await this.persistDocumentSnapshot(
+                {
                   title: existingDoc.title,
                   content: revisedContent,
                   documentType: existingDoc.documentType,
                 },
-                awaitingPersonalizedCoverLetter: false,
-              });
+                { awaitingPersonalizedCoverLetter: false },
+                updateToolId,
+              );
             } catch (e) {
               console.error("persist revised lastGeneratedDocument:", e);
             }
@@ -1678,7 +1782,11 @@ The user can paste a job description to get a detailed analysis. They currently 
             writer.write({
               type: "tool-output-available",
               toolCallId: updateToolId,
-              output: { content: revisedContent, format: "html" },
+              output: {
+                content: revisedContent,
+                format: "html",
+                versionedDocumentId: revVersionId,
+              },
               providerExecuted: true,
             });
 
@@ -1687,7 +1795,7 @@ The user can paste a job description to get a detailed analysis. They currently 
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
+              system: `${PERSONA_RULE}\n\nYou are a concise career coach. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -1784,7 +1892,7 @@ Rules:
               model,
               temperature: 0.7,
               maxOutputTokens: OUT.streamShort,
-              system: `You are a helpful job research assistant. ${GROUNDED_URL_RULE}`,
+              system: `${PERSONA_RULE}\n\nYou are a helpful job research assistant. ${GROUNDED_URL_RULE}`,
               messages: [
                 {
                   role: "user",
@@ -1900,16 +2008,17 @@ Rules:
             });
 
             await this.persistSidebarTitle(tailoredTitle);
+            let personalizedVersionId = "";
             try {
-              await this.setState({
-                ...this.state,
-                lastGeneratedDocument: {
+              personalizedVersionId = await this.persistDocumentSnapshot(
+                {
                   title: tailoredTitle,
                   content: personalizedHtml,
                   documentType: "cover-letter",
                 },
-                awaitingPersonalizedCoverLetter: false,
-              });
+                { awaitingPersonalizedCoverLetter: false },
+                pToolId,
+              );
             } catch (e) {
               console.error("persist lastGeneratedDocument (personalized after JD):", e);
             }
@@ -1917,7 +2026,11 @@ Rules:
             writer.write({
               type: "tool-output-available",
               toolCallId: pToolId,
-              output: { content: personalizedHtml, format: "html" },
+              output: {
+                content: personalizedHtml,
+                format: "html",
+                versionedDocumentId: personalizedVersionId,
+              },
               providerExecuted: true,
             });
 
@@ -1951,7 +2064,7 @@ Rules:
             model,
             temperature: 0.7,
             maxOutputTokens: OUT.streamShort,
-            system: `You are a concise career coach. ${GROUNDED_URL_RULE}`,
+            system: `${PERSONA_RULE}\n\nYou are a concise career coach. ${GROUNDED_URL_RULE}`,
             messages: [
               {
                 role: "user",
