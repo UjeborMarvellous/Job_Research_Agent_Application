@@ -35,7 +35,27 @@ const ACTIVE_KEY = "jra_active_session";
 function loadConversations(): ConversationMeta[] {
   try {
     const raw = localStorage.getItem(CONVOS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed: ConversationMeta[] = JSON.parse(raw);
+
+    // Remove duplicate IDs — keeps first occurrence
+    const seenIds = new Set<string>();
+    const deduped = parsed.filter((c) => {
+      if (seenIds.has(c.id)) return false;
+      seenIds.add(c.id);
+      return true;
+    });
+
+    // Remove extra untouched "New conversation" entries — keep at most one
+    let keptFresh = false;
+    return deduped.filter((c) => {
+      const isFresh = c.title === "New conversation" && c.updatedAt === c.createdAt;
+      if (isFresh) {
+        if (keptFresh) return false;
+        keptFresh = true;
+      }
+      return true;
+    });
   } catch {
     return [];
   }
@@ -122,9 +142,17 @@ function ChatSession({
   const [composerSeed, setComposerSeed] = useState<{ text: string; nonce: number } | null>(null);
   const [editResendFromIndex, setEditResendFromIndex] = useState<number | null>(null);
 
+  // True only after the user sends their first message in this session.
+  // Resets to false on every session switch (ChatSession is keyed by activeSessionId).
+  // This is the reliable guard against the old session's sidebarTitle bleeding into a
+  // new session during the async DO state handoff.
+  const hasUserSentRef = useRef(false);
+
   useEffect(() => {
     const t = agentState.sidebarTitle?.trim();
-    if (t) onTitleUpdate(t);
+    if (!t) return;
+    if (!hasUserSentRef.current) return;
+    onTitleUpdate(t);
   }, [agentState.sidebarTitle, onTitleUpdate]);
 
   useEffect(() => {
@@ -178,6 +206,7 @@ function ChatSession({
         sendMessage({ text: messageText });
       }
 
+      hasUserSentRef.current = true;
       onUserSend();
     },
     [
@@ -267,9 +296,12 @@ function ChatSession({
 
 // ─── Root App ────────────────────────────────────────────────────────────────
 
+const NEW_CONVERSATION_DEBOUNCE_MS = 400;
+
 export default function App() {
   const isMobile = useIsMobile();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const lastNewConversationAtRef = useRef(0);
 
   const [conversations, setConversations] = useState<ConversationMeta[]>(() => {
     const convos = loadConversations();
@@ -340,20 +372,35 @@ export default function App() {
   );
 
   const handleNewConversation = useCallback(() => {
-    const id = crypto.randomUUID();
-    const entry: ConversationMeta = {
-      id,
-      title: "New conversation",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setConversations((prev) => [entry, ...prev]);
-    setActiveSessionId(id);
-    setOpenDocuments([]);
-    setActiveDocumentId(null);
-    setMobileEditorSheetOpen(false);
-    setMobileDrawerOpen(false);
-  }, []);
+    const now = Date.now();
+    if (now - lastNewConversationAtRef.current < NEW_CONVERSATION_DEBOUNCE_MS) return;
+    lastNewConversationAtRef.current = now;
+
+    setConversations((prev) => {
+      // If the current active conversation is already a fresh untouched "New conversation",
+      // don't create a duplicate — just close the drawer and reuse it.
+      const current = prev.find((c) => c.id === activeSessionId);
+      if (current?.title === "New conversation" && current.updatedAt === current.createdAt) {
+        setMobileDrawerOpen(false);
+        return prev;
+      }
+
+      const id = crypto.randomUUID();
+      const ts = new Date().toISOString();
+      const entry: ConversationMeta = {
+        id,
+        title: "New conversation",
+        createdAt: ts,
+        updatedAt: ts,
+      };
+      setActiveSessionId(id);
+      setOpenDocuments([]);
+      setActiveDocumentId(null);
+      setMobileEditorSheetOpen(false);
+      setMobileDrawerOpen(false);
+      return [entry, ...prev];
+    });
+  }, [activeSessionId]);
 
   const handleSelectConversation = useCallback((id: string) => {
     setActiveSessionId(id);
@@ -369,11 +416,12 @@ export default function App() {
         const remaining = prev.filter((c) => c.id !== id);
         if (remaining.length === 0) {
           const newId = crypto.randomUUID();
+          const ts = new Date().toISOString();
           const fresh: ConversationMeta = {
             id: newId,
             title: "New conversation",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: ts,
+            updatedAt: ts,
           };
           setActiveSessionId(newId);
           setOpenDocuments([]);
