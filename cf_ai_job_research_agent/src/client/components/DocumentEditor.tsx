@@ -209,8 +209,9 @@ export default function DocumentEditor({
           {openDocuments.map((doc) => {
             const isActive = doc.id === activeDocumentId;
             return (
-              <div
+              <button
                 key={doc.id}
+                type="button"
                 onClick={() => onSetActiveDocument(doc.id)}
                 style={{
                   display: "flex",
@@ -221,9 +222,10 @@ export default function DocumentEditor({
                   cursor: "pointer",
                   flexShrink: 0,
                   maxWidth: "180px",
+                  border: "none",
                   borderRight: `1px solid ${theme.colors.border}`,
-                  background: isActive ? theme.colors.background : "transparent",
                   borderBottom: isActive ? `2px solid ${theme.colors.text}` : "none",
+                  background: isActive ? theme.colors.background : "transparent",
                   transition: "background 120ms ease",
                 }}
               >
@@ -270,7 +272,7 @@ export default function DocumentEditor({
                 >
                   <X size={11} />
                 </button>
-              </div>
+              </button>
             );
           })}
         </div>

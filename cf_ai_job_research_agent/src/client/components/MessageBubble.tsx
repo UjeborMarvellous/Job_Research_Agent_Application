@@ -15,7 +15,7 @@ type Segment = { type: "text"; value: string } | { type: "url"; value: string };
 // Matches full URLs (https?://) OR bare domain.tld patterns like linkedin.com/jobs.
 // The lookbehind prevents matching mid-word or email addresses (foo@domain.com).
 const URL_RE =
-  /https?:\/\/[^\s<>"]+|(?<![a-zA-Z0-9@])([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.(?:com|org|net|io|co|jobs|app|edu|gov|ai|dev)(?:\/[^\s<>"()\[\]]*)?)/g;
+  /https?:\/\/[^\s<>"]+|(?<![a-zA-Z0-9@])([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.(?:com|org|net|io|co|jobs|app|edu|gov|ai|dev)(?:\/[^\s<>"()[\]]*)?)/g;
 
 /** Strip trailing punctuation that is often captured as part of a URL but is not part of it. */
 function cleanUrl(raw: string): string {
@@ -66,13 +66,18 @@ function LinkModal({ url, onClose }: { url: string; onClose: () => void }) {
   return (
     <>
       {/* Backdrop */}
-      <div
+      <button
         onClick={onClose}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+        aria-label="Close"
         style={{
           position: "fixed",
           inset: 0,
           zIndex: 100,
           background: "rgba(0,0,0,0.18)",
+          border: "none",
+          cursor: "default",
+          padding: 0,
         }}
       />
       {/* Modal */}
@@ -140,7 +145,7 @@ function LinkModal({ url, onClose }: { url: string; onClose: () => void }) {
 
 function TextWithLinks({
   text,
-  color,
+  color: _color,
   onLinkClick,
 }: {
   text: string;
@@ -154,8 +159,9 @@ function TextWithLinks({
         seg.type === "text" ? (
           <span key={i} style={{ whiteSpace: "pre-wrap" }}>{seg.value}</span>
         ) : (
-          <span
+          <button
             key={i}
+            type="button"
             onClick={() => onLinkClick(ensureProtocol(seg.value))}
             style={{
               color: theme.colors.textSecondary,
@@ -166,16 +172,20 @@ function TextWithLinks({
               transition: "background 100ms ease",
               overflowWrap: "anywhere",
               wordBreak: "break-word",
+              border: "none",
+              background: "transparent",
+              font: "inherit",
+              display: "inline",
             }}
             onMouseEnter={(e) => {
-              (e.currentTarget as HTMLSpanElement).style.background = theme.colors.surfaceElevated;
+              (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLSpanElement).style.background = "transparent";
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
             }}
           >
             {seg.value}
-          </span>
+          </button>
         ),
       )}
     </>
@@ -636,10 +646,10 @@ function MessageBubble({
 
             if (isRevision) {
               toolElements.push(
-                <div
+                <button
                   key={`d-${index}`}
-                  role={interactive ? "button" : undefined}
-                  tabIndex={interactive ? 0 : undefined}
+                  type="button"
+                  disabled={!interactive}
                   onClick={interactive ? openThisDocument : undefined}
                   onKeyDown={
                     interactive
@@ -651,11 +661,11 @@ function MessageBubble({
                         }
                       : undefined
                   }
-                  style={cardShellStyle}
+                  style={{ ...cardShellStyle, border: "none", textAlign: "left", font: "inherit" }}
                   onMouseEnter={
                     interactive
                       ? (e) => {
-                          (e.currentTarget as HTMLDivElement).style.background =
+                          (e.currentTarget as HTMLButtonElement).style.background =
                             theme.colors.surfaceHover;
                         }
                       : undefined
@@ -663,7 +673,7 @@ function MessageBubble({
                   onMouseLeave={
                     interactive
                       ? (e) => {
-                          (e.currentTarget as HTMLDivElement).style.background =
+                          (e.currentTarget as HTMLButtonElement).style.background =
                             theme.colors.surface;
                         }
                       : undefined
@@ -712,14 +722,14 @@ function MessageBubble({
                       View version
                     </span>
                   )}
-                </div>,
+                </button>,
               );
             } else {
               toolElements.push(
-                <div
+                <button
                   key={`d-${index}`}
-                  role={interactive ? "button" : undefined}
-                  tabIndex={interactive ? 0 : undefined}
+                  type="button"
+                  disabled={!interactive}
                   onClick={interactive ? openThisDocument : undefined}
                   onKeyDown={
                     interactive
@@ -731,11 +741,11 @@ function MessageBubble({
                         }
                       : undefined
                   }
-                  style={cardShellStyle}
+                  style={{ ...cardShellStyle, border: "none", textAlign: "left", font: "inherit" }}
                   onMouseEnter={
                     interactive
                       ? (e) => {
-                          (e.currentTarget as HTMLDivElement).style.background =
+                          (e.currentTarget as HTMLButtonElement).style.background =
                             theme.colors.surfaceHover;
                         }
                       : undefined
@@ -743,7 +753,7 @@ function MessageBubble({
                   onMouseLeave={
                     interactive
                       ? (e) => {
-                          (e.currentTarget as HTMLDivElement).style.background =
+                          (e.currentTarget as HTMLButtonElement).style.background =
                             theme.colors.surface;
                         }
                       : undefined
@@ -793,7 +803,7 @@ function MessageBubble({
                       {canOpenVersion ? "View version" : "Open in Editor"}
                     </Button>
                   )}
-                </div>,
+                </button>,
               );
             }
           } else if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {

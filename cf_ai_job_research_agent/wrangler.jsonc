@@ -17,5 +17,39 @@
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["JobResearchAgent"] }
-  ]
+  ],
+  "env": {
+    "staging": {
+      "name": "cf-ai-job-research-agent-staging",
+      "ai": { "binding": "AI", "remote": true },
+      "assets": {
+        "directory": "public",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application"
+      },
+      "durable_objects": {
+        "bindings": [
+          { "name": "JobResearchAgent", "class_name": "JobResearchAgent" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["JobResearchAgent"] }
+      ],
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1,
+        "logs": {
+          "enabled": true,
+          "head_sampling_rate": 1,
+          "persist": true,
+          "invocation_logs": true
+        },
+        "traces": {
+          "enabled": false,
+          "persist": true,
+          "head_sampling_rate": 1
+        }
+      }
+    }
+  }
 }

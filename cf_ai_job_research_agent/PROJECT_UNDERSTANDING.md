@@ -7,7 +7,7 @@
 
 ## What We Are Building
 
-A **production-quality Cloudflare AI application** for a Cloudflare internship submission.  
+A **production-quality Cloudflare AI application** for a Cloudflare submission.  
 It is a **Job Application Research Assistant** — the user pastes a job description into a chat interface, and an AI agent returns structured research: company overview, role expectations, culture signals, red flags, interview questions, and positioning tips.  
 All research is **saved automatically** and **persists across page refreshes** using Durable Objects + SQLite.
 

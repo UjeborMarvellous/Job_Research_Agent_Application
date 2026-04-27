@@ -216,13 +216,11 @@ export default function Sidebar({
             const isHovered = hoveredId === convo.id;
             const showDelete = isActive || isHovered;
             return (
-              <div
+              <button
                 key={convo.id}
                 onClick={() => onSelectConversation(convo.id)}
                 onMouseEnter={() => setHoveredId(convo.id)}
                 onMouseLeave={() => setHoveredId(null)}
-                role="button"
-                tabIndex={0}
                 onKeyDown={(e) => e.key === "Enter" && onSelectConversation(convo.id)}
                 style={{
                   display: "flex",
@@ -232,6 +230,8 @@ export default function Sidebar({
                   width: "calc(100% - 16px)",
                   padding: "9px 10px 9px 12px",
                   cursor: "pointer",
+                  border: "none",
+                  textAlign: "left",
                   background: isActive
                     ? theme.colors.surfaceElevated
                     : isHovered
@@ -298,7 +298,7 @@ export default function Sidebar({
                 >
                   <Trash2 size={13} />
                 </button>
-              </div>
+              </button>
             );
           })
         )}
