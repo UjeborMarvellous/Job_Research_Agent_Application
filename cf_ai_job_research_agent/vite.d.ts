@@ -6,6 +6,9 @@ declare module "vite" {
   export interface Plugin {}
   export interface UserConfig {
     plugins?: Plugin[];
+    resolve?: {
+      alias?: Record<string, string>;
+    };
   }
   export function defineConfig(config: UserConfig): UserConfig;
 }

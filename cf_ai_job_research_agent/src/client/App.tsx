@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { Flex, Box } from "@chakra-ui/react";
-import { X } from "lucide-react";
 import useJobAgent from "./hooks/useJobAgent";
 import { useIsMobile } from "./hooks/useMediaQuery";
 import Sidebar from "./components/Sidebar";
@@ -13,7 +12,7 @@ import { getUserMessagePlainTextForComposer } from "./utils/userMessageComposerT
 function MobileSidebarDrawer({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <>
-      <div className="mobile-drawer-backdrop" onClick={onClose} />
+      <button className="mobile-drawer-backdrop" onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()} aria-label="Close sidebar" />
       <div className="mobile-drawer-panel">{children}</div>
     </>
   );

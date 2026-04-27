@@ -302,7 +302,7 @@ export function formatWebSearchContext(hits: WebSearchHit[]): string {
 // ─── Main search decision + routing ──────────────────────────────────────────
 
 /** Appended to search-grounding rule. */
-const GROUNDED_URL_RULE =
+const _GROUNDED_URL_RULE =
   "Never invent or guess URLs. You may include full https:// links only when they appear in the user's message, in web search results provided in this prompt, or in structured data (saved research, tool outputs) you were given.";
 
 export type SearchResult = {
