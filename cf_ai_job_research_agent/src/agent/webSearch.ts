@@ -359,10 +359,7 @@ export async function runSearch(
       }
     }
 
-    return {
-      block: "## Live job search\nNo live job listings were returned. Direct the user to LinkedIn (linkedin.com/jobs), Indeed (indeed.com), or Glassdoor (glassdoor.com).",
-      type: "none",
-    };
+    return { block: "", type: "none" };
   }
 
   // Company / role research: Brave
