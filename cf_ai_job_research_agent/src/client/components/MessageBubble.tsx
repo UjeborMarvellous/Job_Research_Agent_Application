@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from "react";
 import { Loader2, FileText, ExternalLink, Pencil, Copy, Check } from "lucide-react";
 import { getToolName, isToolUIPart } from "ai";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { theme } from "../types";
 import type { UIMessage, JobAnalysis, DocumentSnapshot } from "../types";
 import AgentStepRow from "./AgentStepRow";
@@ -264,6 +266,145 @@ function RagCitations({ sources, compact }: { sources: RagSource[]; compact: boo
   );
 }
 
+// ─── Markdown renderer for assistant messages ─────────────────────────────────
+
+function MarkdownContent({
+  text,
+  compact,
+  onLinkClick,
+}: {
+  text: string;
+  compact: boolean;
+  onLinkClick: (url: string) => void;
+}) {
+  return (
+    <div
+      className="prose-chat"
+      style={{
+        fontSize: compact ? theme.font.size.sm : "15px",
+        color: theme.colors.text,
+        fontFamily: theme.font.family,
+        overflowWrap: "break-word",
+        wordBreak: "break-word",
+        minWidth: 0,
+        maxWidth: "100%",
+        marginBottom: compact ? "6px" : "10px",
+      }}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a({ href, children }) {
+            if (!href) return <>{children}</>;
+            const url = ensureProtocol(href);
+            return (
+              <button
+                type="button"
+                onClick={() => onLinkClick(url)}
+                style={{
+                  color: theme.colors.textSecondary,
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  background: "transparent",
+                  border: "none",
+                  font: "inherit",
+                  padding: "0 2px",
+                  borderRadius: "3px",
+                  display: "inline",
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                }}
+              >
+                {children}
+              </button>
+            );
+          },
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+// ─── Choice card (cover letter confirmation) ──────────────────────────────────
+
+function ChoiceCard({
+  message,
+  options,
+  onChoice,
+  compact,
+}: {
+  message: string;
+  options: { label: string; value: string }[];
+  onChoice: (value: string) => void;
+  compact: boolean;
+}) {
+  return (
+    <div
+      style={{
+        background: theme.colors.surface,
+        border: `1px solid ${theme.colors.border}`,
+        borderRadius: theme.radius.md,
+        padding: compact ? "10px 12px" : "14px 16px",
+        marginTop: compact ? "4px" : "6px",
+        marginBottom: compact ? "6px" : "10px",
+        minWidth: 0,
+        maxWidth: "100%",
+      }}
+    >
+      <div
+        className="prose-chat"
+        style={{
+          fontSize: compact ? theme.font.size.sm : "15px",
+          color: theme.colors.text,
+          fontFamily: theme.font.family,
+          marginBottom: compact ? "10px" : "14px",
+        }}
+      >
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message}</ReactMarkdown>
+      </div>
+      <div style={{ display: "flex", gap: compact ? "6px" : "8px", flexWrap: "wrap" }}>
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChoice(opt.value)}
+            style={{
+              padding: compact ? "6px 12px" : "7px 16px",
+              borderRadius: "8px",
+              border: `1px solid ${theme.colors.border}`,
+              background: theme.colors.background,
+              color: theme.colors.text,
+              fontFamily: theme.font.family,
+              fontSize: compact ? theme.font.size.xs : theme.font.size.sm,
+              fontWeight: theme.font.weight.medium,
+              cursor: "pointer",
+              transition: "background 120ms ease, border-color 120ms ease",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = theme.colors.surfaceElevated;
+              (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.text;
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = theme.colors.background;
+              (e.currentTarget as HTMLButtonElement).style.borderColor = theme.colors.border;
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
 
 function looksLikeRawFunctionCallJson(text: string): boolean {
@@ -287,6 +428,7 @@ interface MessageBubbleProps {
   onLoadDocumentVersion?: (versionedDocumentId: string) => void;
   canEditUserMessage?: boolean;
   onEditUserMessage?: (messageIndex: number) => void;
+  onSendMessage?: (text: string) => void;
   isStreaming?: boolean;
   isMobile?: boolean;
 }
@@ -313,7 +455,7 @@ function MessageBubble({
   onLoadDocumentVersion,
   canEditUserMessage,
   onEditUserMessage,
-  isStreaming = false,
+  onSendMessage,
   isMobile,
 }: MessageBubbleProps) {
   const compact = isMobile === true;
@@ -548,25 +690,12 @@ function MessageBubble({
         if (part.type === "text" && part.text && part.text.trim() !== "") {
           if (looksLikeRawFunctionCallJson(part.text)) return;
           textElements.push(
-            <p
+            <MarkdownContent
               key={`t-${index}`}
-              style={{
-                fontSize: compact ? theme.font.size.sm : "15px",
-                color: theme.colors.text,
-                lineHeight: String(theme.font.lineHeight.relaxed),
-                fontFamily: theme.font.family,
-                whiteSpace: "pre-wrap",
-                overflowWrap: "break-word",
-                wordBreak: "break-word",
-                paddingLeft: compact ? "10px" : "14px",
-                borderLeft: `2px solid ${theme.colors.border}`,
-                marginBottom: compact ? "6px" : "8px",
-                minWidth: 0,
-                maxWidth: "100%",
-              }}
-            >
-              <TextWithLinks text={part.text} color={theme.colors.text} onLinkClick={setActiveUrl} />
-            </p>,
+              text={part.text}
+              compact={compact}
+              onLinkClick={setActiveUrl}
+            />,
           );
           return;
         }
@@ -575,15 +704,7 @@ function MessageBubble({
         if (isToolUIPart(aiPart) && getToolName(aiPart) === "agentStep") {
           const input = aiPart.input as { label?: string } | undefined;
           const label = input?.label?.trim() || "Working…";
-          if (aiPart.state === "output-available") {
-            if (isStreaming) {
-              const out = aiPart.output as { ok?: boolean } | undefined;
-              const ok = out?.ok !== false;
-              toolElements.push(
-                <AgentStepRow key={`s-${index}`} label={label} state={ok ? "done" : "error"} compact={compact} />,
-              );
-            }
-          } else if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
+          if (aiPart.state === "input-streaming" || aiPart.state === "input-available") {
             toolElements.push(<AgentStepRow key={`s-${index}`} label={label} state="active" compact={compact} />);
           }
           return;
@@ -900,6 +1021,23 @@ function MessageBubble({
             if (Array.isArray(sources) && sources.length > 0) {
               ragCitations = <RagCitations sources={sources} compact={compact} />;
             }
+          }
+          return;
+        }
+
+        if (isToolUIPart(aiPart) && getToolName(aiPart) === "promptChoice") {
+          if (aiPart.state === "output-available" && onSendMessage) {
+            const input = aiPart.input as { message?: string; options?: { label: string; value: string }[] };
+            const opts = Array.isArray(input?.options) ? input.options : [];
+            toolElements.push(
+              <ChoiceCard
+                key={`pc-${index}`}
+                message={input?.message ?? ""}
+                options={opts}
+                onChoice={onSendMessage}
+                compact={compact}
+              />,
+            );
           }
           return;
         }

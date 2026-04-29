@@ -285,6 +285,7 @@ export default function ChatWindow({
                     onLoadDocumentVersion={onLoadDocumentVersion}
                     isStreaming={msg.id === lastAssistantId && isStreaming}
                     isMobile={isMobile}
+                    onSendMessage={onSend}
                     canEditUserMessage={
                       msg.role === "user" &&
                       !!onBeginEditUserMessage &&

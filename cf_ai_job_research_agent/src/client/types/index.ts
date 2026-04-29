@@ -99,6 +99,11 @@ export interface AgentState {
    * personalized letter is produced from a saved job analysis.
    */
   awaitingPersonalizedCoverLetter?: boolean;
+  /**
+   * True after the agent asked "generic template or paste JD?" — next cover-letter
+   * request skips the prompt and generates immediately.
+   */
+  awaitingCoverLetterConfirmation?: boolean;
 }
 
 export interface DocumentMeta {

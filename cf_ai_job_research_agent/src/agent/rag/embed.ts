@@ -1,3 +1,4 @@
+// baai embedding model for text vectorization, used in RAG retrieval and other vector search tasks
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5";
 
 export async function embedText(ai: Ai, texts: string[]): Promise<number[][]> {

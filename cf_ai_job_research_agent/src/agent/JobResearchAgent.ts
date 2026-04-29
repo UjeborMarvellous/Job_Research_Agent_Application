@@ -1373,6 +1373,28 @@ The user can paste a job description to get a detailed analysis. They currently 
                 return;
               }
 
+              if (!(this.state as AgentState)?.awaitingCoverLetterConfirmation) {
+                await this.setState({ ...(this.state as AgentState), awaitingCoverLetterConfirmation: true });
+                const choiceId = crypto.randomUUID();
+                writer.write({ type: "tool-input-start", toolCallId: choiceId, toolName: "promptChoice", providerExecuted: true });
+                writer.write({
+                  type: "tool-input-available",
+                  toolCallId: choiceId,
+                  toolName: "promptChoice",
+                  input: {
+                    message: "I don't have a job description yet. I can generate a **generic cover letter template** now with your resume details filled in and placeholder fields for the role — or paste a job description first so I can tailor every paragraph to that specific position.",
+                    options: [
+                      { label: "Generate generic template", value: "Proceed, generate my generic cover letter template" },
+                      { label: "I'll paste the job details", value: "I will paste the job description first" },
+                    ],
+                  },
+                  providerExecuted: true,
+                });
+                writer.write({ type: "tool-output-available", toolCallId: choiceId, output: { ok: true }, providerExecuted: true });
+                return;
+              }
+
+              await this.setState({ ...(this.state as AgentState), awaitingCoverLetterConfirmation: false });
               await runAgentStep(writer, "Drafting generic cover letter", async () => {
                 await Promise.resolve();
               });
