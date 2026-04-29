@@ -1,4 +1,5 @@
 {
+  // trigger ci
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cf-ai-job-research-agent",
   "main": "src/server.ts",
@@ -6,10 +7,24 @@
   "compatibility_flags": ["nodejs_compat"],
   "ai": { "binding": "AI", "remote": true },
   "assets": {
-    "directory": "public",
+    "directory": "dist/client",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  // This manages the Production sesction for the Vector Database, you can change the index_nam
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "job-research-knowledge"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "job-research-db",
+      "database_id": "2b8e7aed-b51d-404e-92ae-6ab8e608a670"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "JobResearchAgent", "class_name": "JobResearchAgent" }
@@ -23,10 +38,23 @@
       "name": "cf-ai-job-research-agent-staging",
       "ai": { "binding": "AI", "remote": true },
       "assets": {
-        "directory": "public",
+        "directory": "dist/client",
         "binding": "ASSETS",
         "not_found_handling": "single-page-application"
       },
+      "vectorize": [
+        {
+          "binding": "VECTORIZE",
+          "index_name": "job-research-knowledge-staging"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "job-research-db-staging",
+          "database_id": "6481cf1d-9c3d-49b5-b8b5-8d96d8798a7a"
+        }
+      ],
       "durable_objects": {
         "bindings": [
           { "name": "JobResearchAgent", "class_name": "JobResearchAgent" }

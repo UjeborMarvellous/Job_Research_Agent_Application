@@ -510,10 +510,13 @@ export default function App() {
 
   const documentVersionMap = agentState.documentVersionMap ?? {};
   const documentVersionByToolCallId = agentState.documentVersionByToolCallId ?? {};
+  // We need a ref to hold the latest documentVersionMap for the handleLoadVersionById callback, which is called asynchronously by the ChatSession when the agent sends a load-document-version tool call. If we read documentVersionMap directly in that callback, it might be stale and miss the requested version, since the callback is not re-created on every render. By using a ref and updating it on every render, we ensure that handleLoadVersionById always has access to the latest document versions. This prevents issues where loading a document version would fail because the map was outdated.
+  const documentVersionMapRef = useRef(documentVersionMap);
+  documentVersionMapRef.current = documentVersionMap;
 
   const handleLoadVersionById = useCallback(
     (versionedDocumentId: string) => {
-      const snap = documentVersionMap[versionedDocumentId];
+      const snap = documentVersionMapRef.current[versionedDocumentId];
       if (!snap?.content) return;
       setOpenDocuments((prev) => {
         const existing = prev.find((d) => d.title === snap.title);
@@ -529,7 +532,7 @@ export default function App() {
       });
       if (isMobile) setMobileEditorSheetOpen(true);
     },
-    [documentVersionMap, isMobile],
+    [isMobile],
   );
 
   // Fix 3 — called by ChatSession when agent pushes new content for the active doc
