@@ -11,7 +11,6 @@ import {
   isToolUIPart,
   type LanguageModel,
   type UIMessage,
-  type UIMessageStreamWriter,
 } from "ai";
 import { z } from "zod";
 import type { AgentState, DocumentSnapshot, ResearchEntry } from "../client/types";
@@ -76,13 +75,6 @@ function docMaxOutputTokens(docType: string): number {
 }
 
 /** Shown in chat when a generic cover letter template is placed in the editor (exact wording). */
-const GENERIC_COVER_ASSISTANT_REPLY =
-  "I've loaded a cover letter template in the editor with your details pre-filled — the highlighted fields are the ones that need the job-specific info. Paste the job description here and I'll tailor every paragraph to the role instantly.";
-
-/** Shown after the user pastes a JD and the editor is updated with a tailored letter. */
-const PERSONALIZED_COVER_AFTER_JD_REPLY =
-  "I've updated your cover letter in the editor for this role. Review the research card above for details.";
-
 /**
  * Prepended to every conversational system prompt.
  * Gives the agent a consistent warm, human voice and prevents LLM self-identification phrases.
@@ -645,29 +637,35 @@ async function produceHtmlDocumentWithRetry(
   }
 }
 
-async function streamAssistantEchoLine(
-  writer: UIMessageStreamWriter,
-  model: LanguageModel,
-  exactLine: string,
-  onFinish: ChatOnFinish,
-  abortSignal: AbortSignal | undefined,
-): Promise<void> {
-  const stepId = beginAgentStep(writer, "Writing reply");
-  const st = streamText({
-    model,
-    temperature: 0,
-    maxOutputTokens: Math.min(512, exactLine.length + 80),
-    system:
-      "You are a copy relay. Output ONLY the exact text in the user message on the next line. No quotes, no preamble, no markdown, no extra words, no line breaks before or after.",
-    messages: [{ role: "user", content: exactLine }],
-    abortSignal,
-    onFinish: async (evt) => {
-      endAgentStep(writer, stepId, true);
-      await onFinish(evt);
-    },
-  });
-  writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
-}
+// NOTE: streamAssistantEchoLine is no longer called — both cover letter paths now use
+// direct streamText calls instead. Kept here for reference.
+// The echo-relay pattern (calling an LLM to output a fixed string) was fragile: after a
+// heavy cover letter generation, the second Workers AI call would rate-limit with no retry,
+// leaving the client stream open and showing "Still working".
+//
+// async function streamAssistantEchoLine(
+//   writer: UIMessageStreamWriter,
+//   model: LanguageModel,
+//   exactLine: string,
+//   onFinish: ChatOnFinish,
+//   abortSignal: AbortSignal | undefined,
+// ): Promise<void> {
+//   const stepId = beginAgentStep(writer, "Writing reply");
+//   const st = streamText({
+//     model,
+//     temperature: 0,
+//     maxOutputTokens: Math.min(512, exactLine.length + 80),
+//     system:
+//       "You are a copy relay. Output ONLY the exact text in the user message on the next line. No quotes, no preamble, no markdown, no extra words, no line breaks before or after.",
+//     messages: [{ role: "user", content: exactLine }],
+//     abortSignal,
+//     onFinish: async (evt) => {
+//       endAgentStep(writer, stepId, true);
+//       await onFinish(evt);
+//     },
+//   });
+//   writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+// }
 
 function clipSidebarTitle(s: string, max = 55): string {
   const t = s.replace(/\s+/g, " ").trim();
@@ -947,8 +945,8 @@ Rules:
           temperature: 0.7,
           maxOutputTokens: OUT.streamShort,
           system: hadResume
-            ? `${PERSONA_RULE}\n\nYou are a job application research assistant. The user just replaced their previously uploaded resume with a new one. You successfully read the resume. Briefly confirm what key details you noticed (name, role/skills if visible) and that it will now be used for cover letters, email drafts, and CV tips. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`
-            : `${PERSONA_RULE}\n\nYou are a job application research assistant. The user just uploaded their resume. You successfully read it. Briefly confirm what key details you noticed (name, role/skills if visible) and mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (3–4 sentences). ${GROUNDED_URL_RULE}`,
+            ? `${PERSONA_RULE}\n\nYou are a job application research assistant. The user just replaced their previously uploaded resume with a new one. You successfully read the resume. Briefly confirm what key details you noticed (name, role/skills if visible) and that it will now be used for cover letters, email drafts, and CV tips. Be concise (3–4 sentences). Do NOT mention, link to, or suggest any job boards, external websites, or specific URLs. ${GROUNDED_URL_RULE}`
+            : `${PERSONA_RULE}\n\nYou are a job application research assistant. The user just uploaded their resume. You successfully read it. Briefly confirm what key details you noticed (name, role/skills if visible) and mention you can now help with cover letters, email drafts, and CV tips tailored to their experience. Be concise (3–4 sentences). Do NOT mention, link to, or suggest any job boards, external websites, or specific URLs. ${GROUNDED_URL_RULE}`,
           messages: [
             {
               role: "user",
@@ -1270,9 +1268,9 @@ Read the full conversation history carefully and answer the user's follow-up que
               system = `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
 
 CRITICAL RULES — follow without exception:
-1. NEVER invent or fabricate job listing URLs. Only use URLs that appear in the "Live job listings" or "Web search results" sections below.
-2. If live job listings ARE provided below: present ALL of them clearly to the user — title, company, location, and apply link. Tell the user these are real, active postings pulled right now from LinkedIn, Indeed, Glassdoor, and other major boards.
-3. If NO live listings are provided below and the user asks for jobs: suggest they paste a job description for a detailed analysis, or share their target role/industry so you can search better.
+1. Only include URLs that appear word-for-word in the search results or web context provided below. Copy them exactly — do not alter, shorten, or invent any part of any URL.
+2. If live job listings ARE provided below: present ALL of them — title, company, location, and apply link. Use only the URLs listed there.
+3. If NO job listings are provided below and the user asks for jobs: tell them no listings were found for that query and ask them to try a more specific role, company, or location — do NOT include any URLs.
 4. NEVER generate sample job descriptions, sample cover letters, sample resumes, or any fabricated "example" content in the chat. If the user asks for a cover letter or document without uploading their resume first, warmly invite them to upload their resume and paste a job description — do not produce fake sample content.
 
 The user can paste a job description to get a detailed analysis. They currently have ${savedEntries.length} saved research${savedEntries.length === 1 ? "" : "es"}.${resumeSnippet}`;
@@ -1449,13 +1447,23 @@ Use <p>, <strong>, <em>, <br> tags. Output ONLY the HTML — no preamble, no exp
                 "Generic cover letter",
                 abortSignal,
               );
-              await streamAssistantEchoLine(
-                writer,
+              const genericReplyStep = beginAgentStep(writer, "Writing reply");
+              const genericReplyStream = streamText({
                 model,
-                GENERIC_COVER_ASSISTANT_REPLY,
-                wrappedFinishGeneric,
+                temperature: 0,
+                maxOutputTokens: 96,
+                system: `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
+                messages: [{
+                  role: "user",
+                  content: "A cover letter template is now in the editor with the candidate's real details pre-filled. Highlighted placeholder fields mark where job-specific info goes. In one sentence: confirm the template is in the editor and invite them to paste a job description so you can tailor every paragraph to the role instantly.",
+                }],
                 abortSignal,
-              );
+                onFinish: async (evt) => {
+                  endAgentStep(writer, genericReplyStep, true);
+                  await wrappedFinishGeneric(evt);
+                },
+              });
+              writer.merge(genericReplyStream.toUIMessageStream({ sendStart: false, sendFinish: true }));
               return;
             }
 
@@ -2006,13 +2014,23 @@ Rules:
               "Personalized cover letter after job posting",
               abortSignal,
             );
-            await streamAssistantEchoLine(
-              writer,
+            const personalizedReplyStep = beginAgentStep(writer, "Writing reply");
+            const personalizedReplyStream = streamText({
               model,
-              PERSONALIZED_COVER_AFTER_JD_REPLY,
-              wrappedPersonalized,
+              temperature: 0,
+              maxOutputTokens: 64,
+              system: `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
+              messages: [{
+                role: "user",
+                content: "The cover letter in the editor has just been fully tailored to the job description. In one sentence: confirm the letter is updated for this role and tell the user to review the research card above for the full analysis.",
+              }],
               abortSignal,
-            );
+              onFinish: async (evt) => {
+                endAgentStep(writer, personalizedReplyStep, true);
+                await wrappedPersonalized(evt);
+              },
+            });
+            writer.merge(personalizedReplyStream.toUIMessageStream({ sendStart: false, sendFinish: true }));
             return;
           }
 

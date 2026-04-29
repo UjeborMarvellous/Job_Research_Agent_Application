@@ -1,7 +1,11 @@
 import { embedSingle } from "./embed";
 
 const TOP_K = 5;
-const MIN_SCORE = 0.65;
+// Gate: only discard all results when even the best match is below this floor.
+// bge-base-en-v1.5 scores conversational queries against documents in the 0.45–0.65 range
+// for genuinely relevant content. Relative ranking (best clears gate → take all top-K)
+// is more robust than a fixed per-chunk cutoff.
+const LOW_FLOOR = 0.35;
 
 export interface RetrievedChunk {
   content: string;
@@ -26,8 +30,9 @@ export async function retrieveContext(
     returnMetadata: "all",
   });
 
-  const above = results.matches.filter((m) => m.score >= MIN_SCORE);
-  if (above.length === 0) return [];
+  const matches = results.matches;
+  if (matches.length === 0 || matches[0].score < LOW_FLOOR) return [];
+  const above = matches.filter((m) => m.score >= LOW_FLOOR);
 
   const ids = above.map((m) => `'${m.id}'`).join(",");
   const rows = await db
