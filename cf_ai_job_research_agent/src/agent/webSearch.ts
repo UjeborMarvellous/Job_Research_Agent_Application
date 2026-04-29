@@ -72,13 +72,16 @@ export async function jSearchJobSearch(
   query: string,
   apiKey: string | undefined,
   signal?: AbortSignal,
+  location?: LocationHint,
 ): Promise<WebSearchHit[]> {
   const key = apiKey?.trim();
   const q = query.trim();
   if (!key || !q) return [];
 
   const url = new URL("https://jsearch.p.rapidapi.com/search");
-  url.searchParams.set("query", q);
+  // Append location to query so JSearch filters by geography
+  const fullQuery = location ? `${q} ${location.text}` : q;
+  url.searchParams.set("query", fullQuery);
   url.searchParams.set("num_pages", "1");
   url.searchParams.set("date_posted", "week");
   url.searchParams.set("remote_jobs_only", /\bremote\b/i.test(q) ? "true" : "false");
@@ -147,10 +150,15 @@ export async function serperJobSearch(
   query: string,
   apiKey: string | undefined,
   signal?: AbortSignal,
+  location?: LocationHint,
 ): Promise<WebSearchHit[]> {
   const key = apiKey?.trim();
   const q = query.trim();
   if (!key || !q) return [];
+
+  const body: Record<string, unknown> = { q, num: 10 };
+  // gl (Google locale) narrows results to the user's country
+  if (location?.countryCode) body.gl = location.countryCode;
 
   try {
     const res = await fetch("https://google.serper.dev/jobs", {
@@ -159,7 +167,7 @@ export async function serperJobSearch(
         "X-API-KEY": key,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ q, num: 10 }),
+      body: JSON.stringify(body),
       signal,
     });
 
@@ -299,6 +307,277 @@ export function formatWebSearchContext(hits: WebSearchHit[]): string {
   ].join("\n");
 }
 
+// ─── Location extraction ──────────────────────────────────────────────────────
+
+export type LocationHint = {
+  text: string;        // e.g. "Lagos, Nigeria" — free-text param for JSearch
+  countryCode: string; // e.g. "ng" — gl param for Serper
+};
+
+// Ordered longest-first so "United Arab Emirates" matches before "Emirates"
+const COUNTRY_MAP: Array<[string, string, string]> = [
+  ["united arab emirates", "ae", "United Arab Emirates"],
+  ["united states of america", "us", "United States"],
+  ["united states", "us", "United States"],
+  ["united kingdom", "gb", "United Kingdom"],
+  ["south africa", "za", "South Africa"],
+  ["south korea", "kr", "South Korea"],
+  ["new zealand", "nz", "New Zealand"],
+  ["saudi arabia", "sa", "Saudi Arabia"],
+  ["ivory coast", "ci", "Ivory Coast"],
+  ["czech republic", "cz", "Czech Republic"],
+  ["costa rica", "cr", "Costa Rica"],
+  ["el salvador", "sv", "El Salvador"],
+  ["netherlands", "nl", "Netherlands"],
+  ["switzerland", "ch", "Switzerland"],
+  ["philippines", "ph", "Philippines"],
+  ["bangladesh", "bd", "Bangladesh"],
+  ["argentina", "ar", "Argentina"],
+  ["indonesia", "id", "Indonesia"],
+  ["australia", "au", "Australia"],
+  ["singapore", "sg", "Singapore"],
+  ["colombia", "co", "Colombia"],
+  ["malaysia", "my", "Malaysia"],
+  ["pakistan", "pk", "Pakistan"],
+  ["portugal", "pt", "Portugal"],
+  ["thailand", "th", "Thailand"],
+  ["ethiopia", "et", "Ethiopia"],
+  ["tanzania", "tz", "Tanzania"],
+  ["cameroon", "cm", "Cameroon"],
+  ["zimbabwe", "zw", "Zimbabwe"],
+  ["slovakia", "sk", "Slovakia"],
+  ["bulgaria", "bg", "Bulgaria"],
+  ["lithuania", "lt", "Lithuania"],
+  ["slovenia", "si", "Slovenia"],
+  ["germany", "de", "Germany"],
+  ["denmark", "dk", "Denmark"],
+  ["belgium", "be", "Belgium"],
+  ["austria", "at", "Austria"],
+  ["finland", "fi", "Finland"],
+  ["ukraine", "ua", "Ukraine"],
+  ["romania", "ro", "Romania"],
+  ["vietnam", "vn", "Vietnam"],
+  ["turkey", "tr", "Turkey"],
+  ["sweden", "se", "Sweden"],
+  ["israel", "il", "Israel"],
+  ["france", "fr", "France"],
+  ["brazil", "br", "Brazil"],
+  ["mexico", "mx", "Mexico"],
+  ["canada", "ca", "Canada"],
+  ["poland", "pl", "Poland"],
+  ["norway", "no", "Norway"],
+  ["ireland", "ie", "Ireland"],
+  ["czechia", "cz", "Czech Republic"],
+  ["croatia", "hr", "Croatia"],
+  ["hungary", "hu", "Hungary"],
+  ["morocco", "ma", "Morocco"],
+  ["tunisia", "tn", "Tunisia"],
+  ["algeria", "dz", "Algeria"],
+  ["ecuador", "ec", "Ecuador"],
+  ["uruguay", "uy", "Uruguay"],
+  ["bolivia", "bo", "Bolivia"],
+  ["estonia", "ee", "Estonia"],
+  ["latvia", "lv", "Latvia"],
+  ["rwanda", "rw", "Rwanda"],
+  ["senegal", "sn", "Senegal"],
+  ["zambia", "zm", "Zambia"],
+  ["uganda", "ug", "Uganda"],
+  ["taiwan", "tw", "Taiwan"],
+  ["jordan", "jo", "Jordan"],
+  ["kuwait", "kw", "Kuwait"],
+  ["qatar", "qa", "Qatar"],
+  ["chile", "cl", "Chile"],
+  ["ghana", "gh", "Ghana"],
+  ["kenya", "ke", "Kenya"],
+  ["egypt", "eg", "Egypt"],
+  ["india", "in", "India"],
+  ["japan", "jp", "Japan"],
+  ["spain", "es", "Spain"],
+  ["italy", "it", "Italy"],
+  ["china", "cn", "China"],
+  ["peru", "pe", "Peru"],
+  ["oman", "om", "Oman"],
+  ["iraq", "iq", "Iraq"],
+  // Short abbreviations — case-insensitive but \b-bounded (no "us" — too many false positives)
+  ["nigeria", "ng", "Nigeria"],
+  ["usa", "us", "United States"],
+  ["uae", "ae", "United Arab Emirates"],
+];
+
+type CityEntry = { countryCode: string; display: string };
+const CITY_MAP: Array<[string, CityEntry]> = [
+  // Longest entries first to ensure greedy matching (e.g. "New York City" before "New York")
+  ["new york city",     { countryCode: "us", display: "New York, USA" }],
+  ["san francisco",     { countryCode: "us", display: "San Francisco, USA" }],
+  ["los angeles",       { countryCode: "us", display: "Los Angeles, USA" }],
+  ["washington dc",     { countryCode: "us", display: "Washington DC, USA" }],
+  ["washington, dc",    { countryCode: "us", display: "Washington DC, USA" }],
+  ["ho chi minh city",  { countryCode: "vn", display: "Ho Chi Minh City, Vietnam" }],
+  ["ho chi minh",       { countryCode: "vn", display: "Ho Chi Minh City, Vietnam" }],
+  ["buenos aires",      { countryCode: "ar", display: "Buenos Aires, Argentina" }],
+  ["rio de janeiro",    { countryCode: "br", display: "Rio de Janeiro, Brazil" }],
+  ["mexico city",       { countryCode: "mx", display: "Mexico City, Mexico" }],
+  ["kuala lumpur",      { countryCode: "my", display: "Kuala Lumpur, Malaysia" }],
+  ["addis ababa",       { countryCode: "et", display: "Addis Ababa, Ethiopia" }],
+  ["dar es salaam",     { countryCode: "tz", display: "Dar es Salaam, Tanzania" }],
+  ["kuwait city",       { countryCode: "kw", display: "Kuwait City, Kuwait" }],
+  ["new delhi",         { countryCode: "in", display: "New Delhi, India" }],
+  ["cape town",         { countryCode: "za", display: "Cape Town, South Africa" }],
+  ["tel aviv",          { countryCode: "il", display: "Tel Aviv, Israel" }],
+  ["abu dhabi",         { countryCode: "ae", display: "Abu Dhabi, UAE" }],
+  ["hong kong",         { countryCode: "hk", display: "Hong Kong" }],
+  ["new york",          { countryCode: "us", display: "New York, USA" }],
+  ["são paulo",         { countryCode: "br", display: "São Paulo, Brazil" }],
+  ["sao paulo",         { countryCode: "br", display: "São Paulo, Brazil" }],
+  ["johannesburg",      { countryCode: "za", display: "Johannesburg, South Africa" }],
+  ["guadalajara",       { countryCode: "mx", display: "Guadalajara, Mexico" }],
+  ["bogotá",            { countryCode: "co", display: "Bogotá, Colombia" }],
+  ["bogota",            { countryCode: "co", display: "Bogotá, Colombia" }],
+  ["bengaluru",         { countryCode: "in", display: "Bangalore, India" }],
+  ["bangalore",         { countryCode: "in", display: "Bangalore, India" }],
+  ["casablanca",        { countryCode: "ma", display: "Casablanca, Morocco" }],
+  ["stockholm",         { countryCode: "se", display: "Stockholm, Sweden" }],
+  ["copenhagen",        { countryCode: "dk", display: "Copenhagen, Denmark" }],
+  ["amsterdam",         { countryCode: "nl", display: "Amsterdam, Netherlands" }],
+  ["singapore",         { countryCode: "sg", display: "Singapore" }],
+  ["bucharest",         { countryCode: "ro", display: "Bucharest, Romania" }],
+  ["bratislava",        { countryCode: "sk", display: "Bratislava, Slovakia" }],
+  ["hyderabad",         { countryCode: "in", display: "Hyderabad, India" }],
+  ["guangzhou",         { countryCode: "cn", display: "Guangzhou, China" }],
+  ["bangalore",         { countryCode: "in", display: "Bangalore, India" }],
+  ["barcelona",         { countryCode: "es", display: "Barcelona, Spain" }],
+  ["frankfurt",         { countryCode: "de", display: "Frankfurt, Germany" }],
+  ["melbourne",         { countryCode: "au", display: "Melbourne, Australia" }],
+  ["shenzhen",          { countryCode: "cn", display: "Shenzhen, China" }],
+  ["montreal",          { countryCode: "ca", display: "Montreal, Canada" }],
+  ["helsinki",          { countryCode: "fi", display: "Helsinki, Finland" }],
+  ["brussels",          { countryCode: "be", display: "Brussels, Belgium" }],
+  ["budapest",          { countryCode: "hu", display: "Budapest, Hungary" }],
+  ["istanbul",          { countryCode: "tr", display: "Istanbul, Turkey" }],
+  ["shanghai",          { countryCode: "cn", display: "Shanghai, China" }],
+  ["toronto",           { countryCode: "ca", display: "Toronto, Canada" }],
+  ["chicago",           { countryCode: "us", display: "Chicago, USA" }],
+  ["hamburg",           { countryCode: "de", display: "Hamburg, Germany" }],
+  ["cologne",           { countryCode: "de", display: "Cologne, Germany" }],
+  ["nairobi",           { countryCode: "ke", display: "Nairobi, Kenya" }],
+  ["kampala",           { countryCode: "ug", display: "Kampala, Uganda" }],
+  ["kigali",            { countryCode: "rw", display: "Kigali, Rwanda" }],
+  ["jakarta",           { countryCode: "id", display: "Jakarta, Indonesia" }],
+  ["beijing",           { countryCode: "cn", display: "Beijing, China" }],
+  ["seattle",           { countryCode: "us", display: "Seattle, USA" }],
+  ["houston",           { countryCode: "us", display: "Houston, USA" }],
+  ["atlanta",           { countryCode: "us", display: "Atlanta, USA" }],
+  ["phoenix",           { countryCode: "us", display: "Phoenix, USA" }],
+  ["detroit",           { countryCode: "us", display: "Detroit, USA" }],
+  ["denver",            { countryCode: "us", display: "Denver, USA" }],
+  ["boston",            { countryCode: "us", display: "Boston, USA" }],
+  ["austin",            { countryCode: "us", display: "Austin, USA" }],
+  ["dallas",            { countryCode: "us", display: "Dallas, USA" }],
+  ["miami",             { countryCode: "us", display: "Miami, USA" }],
+  ["taipei",            { countryCode: "tw", display: "Taipei, Taiwan" }],
+  ["riyadh",            { countryCode: "sa", display: "Riyadh, Saudi Arabia" }],
+  ["muscat",            { countryCode: "om", display: "Muscat, Oman" }],
+  ["london",            { countryCode: "gb", display: "London, United Kingdom" }],
+  ["berlin",            { countryCode: "de", display: "Berlin, Germany" }],
+  ["munich",            { countryCode: "de", display: "Munich, Germany" }],
+  ["zurich",            { countryCode: "ch", display: "Zurich, Switzerland" }],
+  ["geneva",            { countryCode: "ch", display: "Geneva, Switzerland" }],
+  ["vienna",            { countryCode: "at", display: "Vienna, Austria" }],
+  ["lisbon",            { countryCode: "pt", display: "Lisbon, Portugal" }],
+  ["madrid",            { countryCode: "es", display: "Madrid, Spain" }],
+  ["prague",            { countryCode: "cz", display: "Prague, Czech Republic" }],
+  ["warsaw",            { countryCode: "pl", display: "Warsaw, Poland" }],
+  ["dublin",            { countryCode: "ie", display: "Dublin, Ireland" }],
+  ["oslo",              { countryCode: "no", display: "Oslo, Norway" }],
+  ["milan",             { countryCode: "it", display: "Milan, Italy" }],
+  ["rome",              { countryCode: "it", display: "Rome, Italy" }],
+  ["paris",             { countryCode: "fr", display: "Paris, France" }],
+  ["kyiv",              { countryCode: "ua", display: "Kyiv, Ukraine" }],
+  ["kiev",              { countryCode: "ua", display: "Kyiv, Ukraine" }],
+  ["riga",              { countryCode: "lv", display: "Riga, Latvia" }],
+  ["sofia",             { countryCode: "bg", display: "Sofia, Bulgaria" }],
+  ["zagreb",            { countryCode: "hr", display: "Zagreb, Croatia" }],
+  ["tallinn",           { countryCode: "ee", display: "Tallinn, Estonia" }],
+  ["vilnius",           { countryCode: "lt", display: "Vilnius, Lithuania" }],
+  ["amman",             { countryCode: "jo", display: "Amman, Jordan" }],
+  ["doha",              { countryCode: "qa", display: "Doha, Qatar" }],
+  ["dubai",             { countryCode: "ae", display: "Dubai, UAE" }],
+  ["cairo",             { countryCode: "eg", display: "Cairo, Egypt" }],
+  ["accra",             { countryCode: "gh", display: "Accra, Ghana" }],
+  ["lagos",             { countryCode: "ng", display: "Lagos, Nigeria" }],
+  ["abuja",             { countryCode: "ng", display: "Abuja, Nigeria" }],
+  ["dakar",             { countryCode: "sn", display: "Dakar, Senegal" }],
+  ["durban",            { countryCode: "za", display: "Durban, South Africa" }],
+  ["sydney",            { countryCode: "au", display: "Sydney, Australia" }],
+  ["brisbane",          { countryCode: "au", display: "Brisbane, Australia" }],
+  ["perth",             { countryCode: "au", display: "Perth, Australia" }],
+  ["auckland",          { countryCode: "nz", display: "Auckland, New Zealand" }],
+  ["mumbai",            { countryCode: "in", display: "Mumbai, India" }],
+  ["delhi",             { countryCode: "in", display: "Delhi, India" }],
+  ["chennai",           { countryCode: "in", display: "Chennai, India" }],
+  ["kolkata",           { countryCode: "in", display: "Kolkata, India" }],
+  ["pune",              { countryCode: "in", display: "Pune, India" }],
+  ["manila",            { countryCode: "ph", display: "Manila, Philippines" }],
+  ["bangkok",           { countryCode: "th", display: "Bangkok, Thailand" }],
+  ["hanoi",             { countryCode: "vn", display: "Hanoi, Vietnam" }],
+  ["seoul",             { countryCode: "kr", display: "Seoul, South Korea" }],
+  ["osaka",             { countryCode: "jp", display: "Osaka, Japan" }],
+  ["tokyo",             { countryCode: "jp", display: "Tokyo, Japan" }],
+  ["karachi",           { countryCode: "pk", display: "Karachi, Pakistan" }],
+  ["lahore",            { countryCode: "pk", display: "Lahore, Pakistan" }],
+  ["dhaka",             { countryCode: "bd", display: "Dhaka, Bangladesh" }],
+  ["ankara",            { countryCode: "tr", display: "Ankara, Turkey" }],
+  ["vancouver",         { countryCode: "ca", display: "Vancouver, Canada" }],
+  ["calgary",           { countryCode: "ca", display: "Calgary, Canada" }],
+  ["santiago",          { countryCode: "cl", display: "Santiago, Chile" }],
+  ["lima",              { countryCode: "pe", display: "Lima, Peru" }],
+  ["manchester",        { countryCode: "gb", display: "Manchester, United Kingdom" }],
+  ["edinburgh",         { countryCode: "gb", display: "Edinburgh, United Kingdom" }],
+  ["birmingham",        { countryCode: "gb", display: "Birmingham, United Kingdom" }],
+  // Short uppercase-only aliases handled separately below
+];
+
+/**
+ * Scans the user's typed query for an explicit location mention (city or country).
+ * GDPR-safe: reads only the text the user deliberately typed, never stored.
+ * Returns null when no location is detected.
+ */
+export function extractLocationFromQuery(text: string): LocationHint | null {
+  // Short uppercase-only abbreviations — checked against original text to avoid
+  // matching "us" in "tell us" or "show us".
+  const upperAliases: Array<[RegExp, string, string]> = [
+    [/\bUS\b/, "us", "United States"],
+    [/\bUK\b/, "gb", "United Kingdom"],
+    [/\bNZ\b/, "nz", "New Zealand"],
+    [/\bNYC\b/, "us", "New York, USA"],
+    [/\bSF\b/, "us", "San Francisco, USA"],
+    [/\bLA\b(?!\s*\w)/, "us", "Los Angeles, USA"], // "LA" but not "LATAM"
+  ];
+  for (const [pattern, code, display] of upperAliases) {
+    if (pattern.test(text)) return { text: display, countryCode: code };
+  }
+
+  const lower = text.toLowerCase();
+
+  // City map is already ordered longest-first for greedy matching
+  for (const [city, entry] of CITY_MAP) {
+    const escaped = city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(lower)) {
+      return { text: entry.display, countryCode: entry.countryCode };
+    }
+  }
+
+  // Country map is ordered longest-first
+  for (const [name, code, display] of COUNTRY_MAP) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(lower)) {
+      return { text: display, countryCode: code };
+    }
+  }
+
+  return null;
+}
+
 // ─── Main search decision + routing ──────────────────────────────────────────
 
 /** Appended to search-grounding rule. */
@@ -316,11 +595,14 @@ export type SearchResult = {
  *   - Job-finding queries → JSearch (primary) → Serper.dev (fallback)
  *   - Company / role research → Brave
  *   - No signal → skip
+ *
+ * Location precedence: explicit mention in query > defaultLocation (from IP tag) > none
  */
 export async function runSearch(
   userMessage: string,
   env: { JSEARCH_API_KEY?: string; SERPER_API_KEY?: string; BRAVE_SEARCH_API_KEY?: string },
   signal?: AbortSignal,
+  defaultLocation?: LocationHint,
 ): Promise<SearchResult> {
   const text = userMessage.trim();
   if (!text) return { block: "", type: "none" };
@@ -340,11 +622,14 @@ export async function runSearch(
   const query = buildQueryFromMessage(text);
   if (!query) return { block: "", type: "none" };
 
+  // Explicit location in query beats IP-derived default
+  const location = extractLocationFromQuery(text) ?? defaultLocation;
+
   if (isJobQuery) {
     // Primary: JSearch
     const jKey = env.JSEARCH_API_KEY?.trim();
     if (jKey) {
-      const hits = await jSearchJobSearch(query, jKey, signal);
+      const hits = await jSearchJobSearch(query, jKey, signal, location);
       if (hits.length > 0) {
         return { block: formatJobSearchContext(hits, "jsearch"), type: "jobs" };
       }
@@ -353,7 +638,7 @@ export async function runSearch(
     // Fallback: Serper.dev
     const sKey = env.SERPER_API_KEY?.trim();
     if (sKey) {
-      const hits = await serperJobSearch(query, sKey, signal);
+      const hits = await serperJobSearch(query, sKey, signal, location);
       if (hits.length > 0) {
         return { block: formatJobSearchContext(hits, "serper"), type: "jobs" };
       }

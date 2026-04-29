@@ -71,6 +71,13 @@ export interface DocumentSnapshot {
   documentType: string;
 }
 
+export interface UserLocation {
+  country: string | null;
+  city: string | null;
+  region: string | null;
+  timezone: string | null;
+}
+
 export interface AgentState {
   researches: ResearchEntry[];
   resumeText?: string;
