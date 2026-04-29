@@ -6,5 +6,7 @@ declare namespace Cloudflare {
     JSEARCH_API_KEY?: string;
     /** Serper.dev API key — set with: wrangler secret put SERPER_API_KEY */
     SERPER_API_KEY?: string;
+    VECTORIZE: VectorizeIndex;
+    DB: D1Database;
   }
 }

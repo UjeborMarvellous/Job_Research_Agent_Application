@@ -192,6 +192,78 @@ function TextWithLinks({
   );
 }
 
+// ─── RAG source citations ─────────────────────────────────────────────────────
+
+interface RagSource {
+  sourceType: string;
+  company: string;
+  jobTitle: string;
+  score: number;
+}
+
+function RagCitations({ sources, compact }: { sources: RagSource[]; compact: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (sources.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: compact ? "8px" : "10px",
+        borderTop: `1px solid ${theme.colors.border}`,
+        paddingTop: compact ? "6px" : "8px",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "4px",
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          padding: 0,
+          color: theme.colors.textMuted,
+          fontSize: compact ? theme.font.size.xs : theme.font.size.sm,
+          fontFamily: theme.font.family,
+          fontWeight: theme.font.weight.medium,
+        }}
+      >
+        <span style={{ fontSize: "10px" }}>{open ? "▲" : "▼"}</span>
+        Sources used ({sources.length})
+      </button>
+      {open && (
+        <ul style={{ marginTop: compact ? "4px" : "6px", paddingLeft: "16px", listStyle: "disc" }}>
+          {sources.map((s, i) => {
+            const label =
+              s.sourceType === "job_description"
+                ? `Job Description${s.company ? ` — ${s.company}` : ""}${s.jobTitle ? `, ${s.jobTitle}` : ""}`
+                : s.sourceType === "resume"
+                  ? "Resume"
+                  : s.sourceType === "web_search"
+                    ? "Web Search"
+                    : `Company Info${s.company ? ` — ${s.company}` : ""}`;
+            return (
+              <li
+                key={i}
+                style={{
+                  fontSize: compact ? theme.font.size.xs : theme.font.size.sm,
+                  color: theme.colors.textSecondary,
+                  fontFamily: theme.font.family,
+                  marginBottom: "2px",
+                }}
+              >
+                {label} ({Math.round(s.score * 100)}% match)
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
 
 function looksLikeRawFunctionCallJson(text: string): boolean {
@@ -470,6 +542,7 @@ function MessageBubble({
       // Separate text parts from tool/UI parts to wrap text in a collapsible container
       const toolElements: React.ReactNode[] = [];
       const textElements: React.ReactNode[] = [];
+      let ragCitations: React.ReactNode = null;
 
       parts.forEach((part, index) => {
         if (part.type === "text" && part.text && part.text.trim() !== "") {
@@ -820,6 +893,16 @@ function MessageBubble({
           }
           return;
         }
+        // RAG source citations are attached to the assistant message as a separate tool UI part with the name "ragSources" and state "output-available". We loop through message parts here to find it and display the citations directly below all text parts.
+        if (isToolUIPart(aiPart) && getToolName(aiPart) === "ragSources") {
+          if (aiPart.state === "output-available") {
+            const sources = aiPart.output as RagSource[];
+            if (Array.isArray(sources) && sources.length > 0) {
+              ragCitations = <RagCitations sources={sources} compact={compact} />;
+            }
+          }
+          return;
+        }
       });
 
       const assistantText = assistantMessagePlainText(message);
@@ -881,7 +964,7 @@ function MessageBubble({
             )}
             {toolElements}
             {textElements.length > 0 && (
-              <div>{textElements}</div>
+              <div>{textElements}{ragCitations}</div>
             )}
           </div>
         </>

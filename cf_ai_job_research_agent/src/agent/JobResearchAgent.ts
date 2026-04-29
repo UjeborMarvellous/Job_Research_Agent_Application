@@ -25,6 +25,9 @@ import {
 import {
   runSearch,
 } from "./webSearch";
+// Imported the Rag code so when called it can be gotten
+import { ingestDocument } from "./rag/ingest";
+import { retrieveContext, formatContextBlock } from "./rag/retrieve";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -562,6 +565,7 @@ const STRIP_FROM_LLM_CONTEXT = new Set<string>([
   AGENT_STEP_TOOL_NAME,
   "analyzeJobPosting",
   "generateDocument",
+  "ragSources",
 ]);
 
 function stripUiToolPartsForLlm(messages: UIMessage[]): UIMessage[] {
@@ -907,6 +911,18 @@ Rules:
       } catch (err) {
         console.error("Failed to store resume:", err);
       }
+      // Persist the resume text as a document snapshot for potential future reference in updates or tools, even if no immediate intent is detected from the tag.
+      if (actualResumeText) {
+        ingestDocument({
+          ai: this.env.AI,
+          vectorize: this.env.VECTORIZE,
+          db: this.env.DB,
+          sessionId: this.ctx.id.toString(),
+          sourceType: "resume",
+          content: actualResumeText,
+          title: resumeTag.fileName,
+        }).catch((e) => console.error("[RAG] resume ingest failed:", e));
+      }
 
       if (!intentFromTag && !actualResumeText) {
         // No text extracted and no intent — likely parsing error
@@ -1170,15 +1186,52 @@ Rules:
               : "";
 
             let webBlock = "";
+            let ragContext = "";
             const needsSearch =
               lastUser.length >= 30 ||
               /\b(?:link|url|site|website|search|find|look\s*up|where|apply|glassdoor|linkedin|careers?|news|job|jobs|hiring|opening|position|opportunit|match|salary|remote|work)\b/i.test(lastUser);
+
+            let ragChunks: Awaited<ReturnType<typeof retrieveContext>> = [];
+            await runAgentStep(writer, "Searching knowledge base", async () => {
+              ragChunks = await retrieveContext(
+                this.env.AI,
+                this.env.VECTORIZE,
+                this.env.DB,
+                this.ctx.id.toString(),
+                lastUser,
+              );
+              if (ragChunks.length > 0) ragContext = formatContextBlock(ragChunks);
+            });
+
+            if (ragChunks.length > 0) {
+              const ragSourcesId = crypto.randomUUID();
+              writer.write({ type: "tool-input-start", toolCallId: ragSourcesId, toolName: "ragSources", providerExecuted: true });
+              writer.write({ type: "tool-input-available", toolCallId: ragSourcesId, toolName: "ragSources", input: {}, providerExecuted: true });
+              writer.write({
+                type: "tool-output-available",
+                toolCallId: ragSourcesId,
+                output: ragChunks.map((c) => ({ sourceType: c.sourceType, company: c.company, jobTitle: c.jobTitle, score: c.score })),
+                providerExecuted: true,
+              });
+            }
 
             if (needsSearch) {
               await runAgentStep(writer, "Searching for live results", async () => {
                 const result = await runSearch(lastUser, this.env, abortSignal);
                 if (result.block) webBlock = result.block;
               });
+              // Ingest the web search block as a document for future retrieval, associated with this conversation session (but not tied to a specific job entry since it's just general context).
+              if (webBlock) {
+                ingestDocument({
+                  ai: this.env.AI,
+                  vectorize: this.env.VECTORIZE,
+                  db: this.env.DB,
+                  sessionId: this.ctx.id.toString(),
+                  sourceType: "web_search",
+                  content: webBlock,
+                  title: `Web search: ${lastUser.slice(0, 80)}`,
+                }).catch((e) => console.error("[RAG] web search ingest failed:", e));
+              }
             }
 
             let system: string;
@@ -1226,7 +1279,8 @@ The user can paste a job description to get a detailed analysis. They currently 
             }
 
             const webSection = webBlock ? `\n\n${webBlock}` : "";
-            system = `${system}${webSection}\n\n${GROUNDED_URL_RULE}`;
+            const ragSection = ragContext ? `\n\n${ragContext}` : "";
+            system = `${system}${ragSection}${webSection}\n\n${GROUNDED_URL_RULE}`;
 
             const threadHint = ctx?.analysis
               ? `Follow-up about ${ctx.jobTitle} at ${ctx.company}`
@@ -1234,7 +1288,7 @@ The user can paste a job description to get a detailed analysis. They currently 
                 ? `Discussion referencing ${ctx.jobTitle} at ${ctx.company}`
                 : undefined;
 
-            if (ctx?.analysis || ctx || resumeText) {
+            if (ctx?.analysis || ctx || resumeText || ragContext) {
               await runAgentStep(writer, "Loading saved context", async () => {
                 await Promise.resolve();
               });
@@ -1735,6 +1789,18 @@ Rules:
             }
             result = analysisObj;
             endAgentStep(writer, extractId, true);
+            // Kick off async RAG ingestion without awaiting it — we don't want to block the user while we vectorize and store their JD, but we want to start as soon as possible in case they ask follow-ups that we can answer with retrieval
+            ingestDocument({
+              ai: this.env.AI,
+              vectorize: this.env.VECTORIZE,
+              db: this.env.DB,
+              sessionId: this.ctx.id.toString(),
+              sourceType: "job_description",
+              content: lastUser,
+              title: `${analysisObj.jobTitle} at ${analysisObj.company}`,
+              company: analysisObj.company,
+              jobTitle: analysisObj.jobTitle,
+            }).catch((e) => console.error("[RAG] job description ingest failed:", e));
           } catch (err) {
             console.error("Job analysis failed:", err);
             endAgentStep(writer, extractId, false);
@@ -1824,6 +1890,26 @@ Rules:
               researches: updated,
             });
             endAgentStep(writer, saveId, true);
+            // Kick off async RAG ingestion without awaiting it — we don't want to block the user while we vectorize and store their JD, but we want to start as soon as possible in case they ask follow-ups that we can answer with retrieval
+            ingestDocument({
+              ai: this.env.AI,
+              vectorize: this.env.VECTORIZE,
+              db: this.env.DB,
+              sessionId: this.ctx.id.toString(),
+              sourceType: "company_info",
+              content: [
+                `Role: ${jobTitle} at ${company}`,
+                `Company Overview: ${analysis.companyOverview}`,
+                `Role Expectations: ${analysis.roleExpectations}`,
+                `Culture Signals: ${analysis.cultureSignals}`,
+                `Potential Red Flags: ${analysis.potentialRedFlags}`,
+                `Positioning Tips: ${analysis.positioningTips}`,
+                `Questions to Ask: ${analysis.questionsToAsk.join("; ")}`,
+              ].join("\n\n"),
+              title: `${jobTitle} at ${company} — Full Analysis`,
+              company,
+              jobTitle,
+            }).catch((e) => console.error("[RAG] company info ingest failed:", e));
           } catch (persistErr) {
             console.error("persist research failed:", persistErr);
             endAgentStep(writer, saveId, false);
