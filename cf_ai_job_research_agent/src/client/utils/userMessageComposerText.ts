@@ -19,10 +19,15 @@ function stripEditorContentTag(text: string): string {
   return text.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
 }
 
+/** Strip IP geolocation tag sent on first message (not shown in chat UI). */
+function stripUserLocationTag(text: string): string {
+  return text.replace(/^\[user-location:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+}
+
 function stripLeadingAgentTags(text: string): string {
   let t = text;
-  for (let i = 0; i < 4; i++) {
-    const next = stripEditorSessionTag(stripEditorContentTag(t));
+  for (let i = 0; i < 5; i++) {
+    const next = stripUserLocationTag(stripEditorSessionTag(stripEditorContentTag(t)));
     if (next === t) break;
     t = next;
   }

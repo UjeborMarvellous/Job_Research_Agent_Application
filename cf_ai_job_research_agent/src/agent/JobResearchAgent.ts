@@ -23,6 +23,7 @@ import {
 } from "./agentSteps";
 import {
   runSearch,
+  type LocationHint,
 } from "./webSearch";
 // Imported the Rag code so when called it can be gotten
 import { ingestDocument } from "./rag/ingest";
@@ -100,7 +101,9 @@ function capStr(s: string, maxChars: number): string {
  * Used as a pre-LLM heuristic to avoid misclassification as "chat".
  */
 function looksLikeDocumentRequest(text: string): "cover-letter" | "email" | "cv-tips" | null {
-  const t = text.toLowerCase();
+  const t = text.trim().toLowerCase();
+  // Capability / informational questions → let the LLM classifier decide; do not force generate-document.
+  if (/^(?:can you|do you|will you|could you|are you able|what can|how do|how does|is it possible|what is|what's|tell me about|do you handle|can i get|what (?:do|does|can)|how (?:do|can|does))\b/.test(t)) return null;
   if (/cover[\s-]?letter/.test(t)) return "cover-letter";
   if (/application[\s-]?email|email.*application/.test(t)) return "email";
   if (/cv[\s-]?tip|resume[\s-]?tip|improve.*(?:cv|resume)|(?:cv|resume).*tip/.test(t)) return "cv-tips";
@@ -204,6 +207,19 @@ type EditorSessionMeta = {
   documentId: string | null;
   title: string | null;
 };
+
+/** Parse and strip [user-location:base64json] tag sent by the client on first message. */
+function extractUserLocationTag(text: string): { location: { country: string | null; city: string | null; region: string | null; timezone: string | null }; stripped: string } | null {
+  const m = text.match(/\[user-location:([A-Za-z0-9+/=]+)\]/);
+  if (!m) return null;
+  try {
+    const location = JSON.parse(atob(m[1]));
+    const stripped = text.replace(/\[user-location:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+    return { location, stripped };
+  } catch {
+    return null;
+  }
+}
 
 /** Strip leading [editor-session:base64] tag (URL-safe base64 from client). */
 function stripEditorSessionPrefix(text: string): string {
@@ -851,10 +867,34 @@ Rules:
     if (liveEditorContent !== null) {
       lastUser = lastUser.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
     }
+
+    // Extract and strip the [user-location:...] tag — used in-memory this request only,
+    // never persisted to DO state (GDPR compliance).
+    const locationTag = extractUserLocationTag(lastUser);
+    if (locationTag) {
+      lastUser = locationTag.stripped;
+    }
+
+    // Build a LocationHint from IP data — used as default when the user's query
+    // has no explicit location mention. Pure in-memory, never written to state.
+    let ipLocation: LocationHint | undefined;
+    if (locationTag?.location?.country) {
+      const cc = locationTag.location.country.toLowerCase();
+      const parts = [locationTag.location.city, locationTag.location.country].filter(Boolean);
+      ipLocation = { text: parts.join(", "), countryCode: cc };
+    }
+
     const editorSessionNote = formatEditorSessionForClassifier(editorSessionMeta);
 
     const modelMessages = await convertToModelMessages(
-      stripUiToolPartsForLlm(uiMessages),
+      stripUiToolPartsForLlm(uiMessages).map((msg) => ({
+        ...msg,
+        parts: msg.parts?.map((p) =>
+          p.type === "text" && typeof (p as { text?: string }).text === "string"
+            ? { ...p, text: (p as { text: string }).text.replace(/\[user-location:[A-Za-z0-9+/=]+\]\s*/g, "").trimStart() }
+            : p,
+        ),
+      })),
     );
     const savedEntries = (this.state?.researches ?? []) as ResearchEntry[];
 
@@ -1215,7 +1255,7 @@ Rules:
 
             if (needsSearch) {
               await runAgentStep(writer, "Searching for live results", async () => {
-                const result = await runSearch(lastUser, this.env, abortSignal);
+                const result = await runSearch(lastUser, this.env, abortSignal, ipLocation);
                 if (result.block) webBlock = result.block;
               });
               // Ingest the web search block as a document for future retrieval, associated with this conversation session (but not tied to a specific job entry since it's just general context).
@@ -1326,23 +1366,78 @@ The user can paste a job description to get a detailed analysis. They currently 
             const rawJdFallback = !ctx ? findRawJobDescriptionInHistory(uiMessages) : null;
             const hasAnyJobContext = !!(ctx || rawJdFallback);
 
-            // Gate: resume is always required
+            // Gate: no resume — offer a fully generic template or ask them to upload
             if (!resumeText) {
-              const gateStep = beginAgentStep(writer, "Writing reply");
-              const wrappedFinish = this.withSidebarTitleAfterStream(onFinish, model, lastUser, undefined, abortSignal);
-              const hint = hasAnyJobContext
-                ? "The user wants a document but hasn't uploaded a resume yet. Warmly let them know you'd love to make this personal — ask them to upload their resume so you can tailor every line to their experience. 2 sentences max."
-                : "The user wants a document but has no resume and no job description yet. Respond warmly in 2 sentences: acknowledge their request with enthusiasm, then invite them to upload their resume and paste the job description so you can write something genuinely tailored to them. Do NOT generate any sample content, templates, or examples.";
-              const st = streamText({
+              const alreadyAsked = (this.state as AgentState)?.awaitingCoverLetterConfirmation === true;
+
+              if (!alreadyAsked) {
+                // First time: show promptChoice card (same UX as the resume-present path)
+                await this.setState({ ...(this.state as AgentState), awaitingCoverLetterConfirmation: true });
+                const choiceId = crypto.randomUUID();
+                writer.write({ type: "tool-input-start", toolCallId: choiceId, toolName: "promptChoice", providerExecuted: true });
+                writer.write({
+                  type: "tool-input-available",
+                  toolCallId: choiceId,
+                  toolName: "promptChoice",
+                  input: {
+                    message: "I don't have your resume yet. I can generate a **generic cover letter template** with placeholder fields you can fill in — or upload your resume first so I can personalise every line to your experience.",
+                    options: [
+                      { label: "Generate generic template", value: "Proceed, generate my generic cover letter template" },
+                      { label: "I'll upload my resume first", value: "I will upload my resume first" },
+                    ],
+                  },
+                  providerExecuted: true,
+                });
+                writer.write({ type: "tool-output-available", toolCallId: choiceId, output: { ok: true }, providerExecuted: true });
+                return;
+              }
+
+              // User already saw the prompt and chose to proceed — generate fully generic (all placeholders)
+              await this.setState({ ...(this.state as AgentState), awaitingCoverLetterConfirmation: false });
+              await runAgentStep(writer, "Drafting generic cover letter", async () => { await Promise.resolve(); });
+              const genericTitle = "Cover Letter (generic)";
+              const genericSystem = `You are a professional cover letter writer. The user has not provided a resume or job description. Generate a fully generic cover letter TEMPLATE in clean HTML where every personal and job-specific field is a clearly labeled placeholder.
+
+Use these exact placeholder formats, each wrapped in: <span style="background:#fef9c3;padding:0 3px;border-radius:3px;font-weight:600;">[ PLACEHOLDER ]</span>
+- [ YOUR NAME ] — sender name
+- [ YOUR EMAIL ] — contact email
+- [ TODAY'S DATE ] — date line
+- [ HIRING MANAGER NAME ] — salutation
+- [ COMPANY NAME ] — every reference to the employer
+- [ JOB TITLE ] — every reference to the role
+- [ YOUR BACKGROUND / FIELD ] — candidate background
+- [ KEY SKILL OR ACHIEVEMENT ] — skill match paragraphs
+- [ SPECIFIC TEAM OR DEPARTMENT ] — team references
+
+Use <p>, <strong>, <em>, <br> tags. Output ONLY the HTML — no preamble, no explanation. ${NO_HREF_RULE}`;
+              const genericTokenCap = docMaxOutputTokens("cover-letter");
+              const genericHtml = await produceHtmlDocumentWithRetry(
                 model,
-                temperature: 0.7,
-                maxOutputTokens: OUT.streamShort,
-                system: `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. ${GROUNDED_URL_RULE}`,
-                messages: [{ role: "user", content: hint }],
+                genericSystem,
+                "Generate the cover letter template.",
+                genericTokenCap,
                 abortSignal,
-                onFinish: async (evt) => { endAgentStep(writer, gateStep, true); await wrappedFinish(evt); },
+              );
+              const genToolId = crypto.randomUUID();
+              writer.write({ type: "tool-input-start", toolCallId: genToolId, toolName: "generateDocument", providerExecuted: true });
+              writer.write({ type: "tool-input-available", toolCallId: genToolId, toolName: "generateDocument", input: { documentType: "cover-letter", title: genericTitle }, providerExecuted: true });
+              await this.persistSidebarTitle(genericTitle);
+              let genericVersionId = "";
+              try {
+                genericVersionId = await this.persistDocumentSnapshot({ title: genericTitle, content: genericHtml, documentType: "cover-letter" }, {}, genToolId);
+              } catch (e) { console.error("persist generic (no-resume):", e); }
+              writer.write({ type: "tool-output-available", toolCallId: genToolId, output: { content: genericHtml, format: "html", versionedDocumentId: genericVersionId }, providerExecuted: true });
+              const noResumeReplyStep = beginAgentStep(writer, "Writing reply");
+              const noResumeReply = streamText({
+                model,
+                temperature: 0,
+                maxOutputTokens: 96,
+                system: `${PERSONA_RULE}\n\n${GROUNDED_URL_RULE}`,
+                messages: [{ role: "user", content: "A fully generic cover letter template is now in the editor — every field is a placeholder ready to fill in. In one sentence: confirm it's ready and invite them to upload their resume or paste a job description so you can personalise it." }],
+                abortSignal,
+                onFinish: async (evt) => { endAgentStep(writer, noResumeReplyStep, true); await onFinish(evt); },
               });
-              writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
+              writer.merge(noResumeReply.toUIMessageStream({ sendStart: false, sendFinish: true }));
               return;
             }
             const docTypeEarly = documentType ?? "cover-letter";
@@ -1373,6 +1468,28 @@ The user can paste a job description to get a detailed analysis. They currently 
                 return;
               }
 
+              if (!(this.state as AgentState)?.awaitingCoverLetterConfirmation) {
+                await this.setState({ ...(this.state as AgentState), awaitingCoverLetterConfirmation: true });
+                const choiceId = crypto.randomUUID();
+                writer.write({ type: "tool-input-start", toolCallId: choiceId, toolName: "promptChoice", providerExecuted: true });
+                writer.write({
+                  type: "tool-input-available",
+                  toolCallId: choiceId,
+                  toolName: "promptChoice",
+                  input: {
+                    message: "I don't have a job description yet. I can generate a **generic cover letter template** now with your resume details filled in and placeholder fields for the role — or paste a job description first so I can tailor every paragraph to that specific position.",
+                    options: [
+                      { label: "Generate generic template", value: "Proceed, generate my generic cover letter template" },
+                      { label: "I'll paste the job details", value: "I will paste the job description first" },
+                    ],
+                  },
+                  providerExecuted: true,
+                });
+                writer.write({ type: "tool-output-available", toolCallId: choiceId, output: { ok: true }, providerExecuted: true });
+                return;
+              }
+
+              await this.setState({ ...(this.state as AgentState), awaitingCoverLetterConfirmation: false });
               await runAgentStep(writer, "Drafting generic cover letter", async () => {
                 await Promise.resolve();
               });
