@@ -514,7 +514,8 @@ function MessageBubble({
           .map((p) => (p as { text: string }).text)
           .join("\n") ?? "";
 
-      const resumeMatch = text.match(/^\[resume-upload:([^\]]+)\]([\s\S]*)$/);
+      const textForMatching = text.replace(/^\[user-location:[A-Za-z0-9+/=]+\]\s*/, "");
+      const resumeMatch = textForMatching.match(/^\[resume-upload:([^\]]+)\]([\s\S]*)$/);
       if (resumeMatch) {
         const fileName = resumeMatch[1];
         // Only show the user's typed intent, not the full resume body
@@ -614,7 +615,7 @@ function MessageBubble({
         );
       }
 
-      if (text.startsWith("[view-entry:")) return null;
+      if (textForMatching.startsWith("[view-entry:")) return null;
 
       const displayText = stripUserMessageTagsForDisplay(text);
 

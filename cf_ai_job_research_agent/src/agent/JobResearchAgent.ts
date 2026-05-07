@@ -86,13 +86,15 @@ const PERSONA_RULE =
   "NEVER say 'I am a large language model', 'As an AI', 'I don't have feelings', or any similar phrase. " +
   "You have opinions and can express enthusiasm, concern, or excitement where appropriate.";
 
+const SEARCH_CONDUCT_RULE = `When a user specifies a salary, location, or any search constraint, search for it exactly as given. Do not comment on whether the salary is realistic, competitive, or appropriate for the city or role level. If no listings match the criteria, state that factually in one sentence and suggest broadening the location or removing the salary filter. Never volunteer salary market opinions, cost-of-living commentary, or redirect the user to external job boards like Indeed or LinkedIn.`;
+
 /**
  * Truncate a string to maxChars, appending "..." if cut.
  * Used to cap resume and job context fields before they are embedded in prompts.
  */
-function capStr(s: string, maxChars: number): string {
-  if (!s || s.length <= maxChars) return s;
-  return `${s.slice(0, maxChars)}...`;
+function capStr(inputString: string, maxChars: number): string {
+  if (!inputString || inputString.length <= maxChars) return inputString;
+  return `${inputString.slice(0, maxChars)}...`;
 }
 
 /**
@@ -235,16 +237,16 @@ function extractEditorSessionMeta(text: string): EditorSessionMeta | null {
   if (!m) return null;
   try {
     const json = decodeURIComponent(escape(atob(m[1])));
-    const o = JSON.parse(json) as {
+    const parsed = JSON.parse(json) as {
       open?: boolean;
       documentId?: string | null;
       title?: string | null;
     };
-    if (!o || typeof o.open !== "boolean") return null;
+    if (!parsed || typeof parsed.open !== "boolean") return null;
     return {
-      open: o.open,
-      documentId: typeof o.documentId === "string" ? o.documentId : null,
-      title: typeof o.title === "string" ? o.title : null,
+      open: parsed.open,
+      documentId: typeof parsed.documentId === "string" ? parsed.documentId : null,
+      title: typeof parsed.title === "string" ? parsed.title : null,
     };
   } catch {
     return null;
@@ -266,24 +268,24 @@ When the editor is open and the user is clearly working on that document, prefer
 }
 
 function normalizeDocType(
-  t: string | undefined,
+  docTypeInput: string | undefined,
 ): "cover-letter" | "email" | "cv-tips" {
-  if (t === "email" || t === "cv-tips") return t;
+  if (docTypeInput === "email" || docTypeInput === "cv-tips") return docTypeInput;
   return "cover-letter";
 }
 
 /** Strip client-only tags for intent heuristics and classification. */
 function stripForIntentClassification(text: string): string {
-  let t = text.trim();
+  let stripped = text.trim();
   for (let i = 0; i < 6; i++) {
-    const next = t
+    const next = stripped
       .replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "")
       .replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "")
       .trim();
-    if (next === t) break;
-    t = next;
+    if (next === stripped) break;
+    stripped = next;
   }
-  return t;
+  return stripped;
 }
 
 const JOB_KEYWORDS = [
@@ -312,10 +314,10 @@ const JOB_KEYWORDS = [
 function looksLikeJobPosting(text: string): boolean {
   if (text.length < 400) return false;
   const lower = text.toLowerCase();
-  let hits = 0;
-  for (const kw of JOB_KEYWORDS) {
-    if (lower.includes(kw)) hits++;
-    if (hits >= 3) return true;
+  let matchCount = 0;
+  for (const keyword of JOB_KEYWORDS) {
+    if (lower.includes(keyword)) matchCount++;
+    if (matchCount >= 3) return true;
   }
   return false;
 }
@@ -356,23 +358,23 @@ function isPersistableJobAnalysis(
   companyOverview: string,
   userSourceText: string,
 ): boolean {
-  const c = company.trim().toLowerCase();
-  const overview = companyOverview.trim().toLowerCase();
-  const src = userSourceText.trim();
+  const companyLower = company.trim().toLowerCase();
+  const overviewLower = companyOverview.trim().toLowerCase();
+  const sourceText = userSourceText.trim();
   if (!company.trim() || !jobTitle.trim()) return false;
   if (
-    c === "unknown company" ||
-    c === "unknown" ||
-    c === "n/a" ||
-    c === "not specified" ||
-    /^unknown(\s+company)?$/.test(c)
+    companyLower === "unknown company" ||
+    companyLower === "unknown" ||
+    companyLower === "n/a" ||
+    companyLower === "not specified" ||
+    /^unknown(\s+company)?$/.test(companyLower)
   ) {
     return false;
   }
   if (
-    src.length < 600 &&
-    (/unknown company|not provided|cannot be determined|missing as the company name/.test(overview) ||
-      /company name is not provided/.test(overview))
+    sourceText.length < 600 &&
+    (/unknown company|not provided|cannot be determined|missing as the company name/.test(overviewLower) ||
+      /company name is not provided/.test(overviewLower))
   ) {
     return false;
   }
@@ -440,8 +442,8 @@ Rules:
       abortSignal,
     });
     return object;
-  } catch (err) {
-    console.error("[classifyIntent] failed, defaulting to chat:", err);
+  } catch (classifyError) {
+    console.error("[classifyIntent] failed, defaulting to chat:", classifyError);
     return { intent: "chat" };
   }
 }
@@ -683,18 +685,18 @@ async function produceHtmlDocumentWithRetry(
 //   writer.merge(st.toUIMessageStream({ sendStart: false, sendFinish: true }));
 // }
 
-function clipSidebarTitle(s: string, max = 55): string {
-  const t = s.replace(/\s+/g, " ").trim();
-  if (!t) return "";
-  if (t.length <= max) return t;
-  return `${t.slice(0, Math.max(0, max - 1))}…`;
+function clipSidebarTitle(titleText: string, max = 55): string {
+  const normalized = titleText.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(0, max - 1))}…`;
 }
 
 function shouldRunLlmSidebarTitle(lastUser: string): boolean {
-  const t = lastUser.trim();
-  if (!t) return false;
-  if (extractResumeUploadTag(t)) return false;
-  if (extractViewEntryTag(t)) return false;
+  const trimmedUser = lastUser.trim();
+  if (!trimmedUser) return false;
+  if (extractResumeUploadTag(trimmedUser)) return false;
+  if (extractViewEntryTag(trimmedUser)) return false;
   return true;
 }
 
@@ -711,12 +713,12 @@ function provisionalSidebarTitleFromUserText(text: string): string {
     body = text.trim();
   }
   if (!body) return "";
-  let t = body;
-  t = t.replace(/^\[view-entry:[^\]]+\]\s*/i, "").trim();
-  t = t.replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "").trim();
-  t = t.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
-  if (!t) return "";
-  const words = t.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
+  let titleCandidate = body;
+  titleCandidate = titleCandidate.replace(/^\[view-entry:[^\]]+\]\s*/i, "").trim();
+  titleCandidate = titleCandidate.replace(/^\[editor-session:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+  titleCandidate = titleCandidate.replace(/^\[editor-content:[A-Za-z0-9+/=]+\]\s*/, "").trim();
+  if (!titleCandidate) return "";
+  const words = titleCandidate.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
   return clipSidebarTitle(words);
 }
 
@@ -752,17 +754,17 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
       title: meta.title,
       documentType: meta.documentType,
     };
-    const prevMap = { ...(this.state.documentVersionMap ?? {}) };
-    prevMap[documentId] = snapshot;
-    const prevByCall = { ...(this.state.documentVersionByToolCallId ?? {}) };
+    const updatedVersionMap = { ...(this.state.documentVersionMap ?? {}) };
+    updatedVersionMap[documentId] = snapshot;
+    const updatedVersionByCall = { ...(this.state.documentVersionByToolCallId ?? {}) };
     if (toolCallLinkId) {
-      prevByCall[toolCallLinkId] = documentId;
+      updatedVersionByCall[toolCallLinkId] = documentId;
     }
     await this.setState({
       ...this.state,
       ...extra,
-      documentVersionMap: prevMap,
-      documentVersionByToolCallId: prevByCall,
+      documentVersionMap: updatedVersionMap,
+      documentVersionByToolCallId: updatedVersionByCall,
       lastGeneratedDocument: {
         title: meta.title,
         content: meta.content,
@@ -784,8 +786,8 @@ export class JobResearchAgent extends AIChatAgent<Env, AgentState> {
         sidebarTitle: clipped,
         sidebarTitleFinalized: true,
       });
-    } catch (e) {
-      console.error("persistSidebarTitle:", e);
+    } catch (persistError) {
+      console.error("persistSidebarTitle:", persistError);
     }
   }
 
@@ -879,9 +881,9 @@ Rules:
     // has no explicit location mention. Pure in-memory, never written to state.
     let ipLocation: LocationHint | undefined;
     if (locationTag?.location?.country) {
-      const cc = locationTag.location.country.toLowerCase();
-      const parts = [locationTag.location.city, locationTag.location.country].filter(Boolean);
-      ipLocation = { text: parts.join(", "), countryCode: cc };
+      const countryCode = locationTag.location.country.toLowerCase();
+      const locationParts = [locationTag.location.city, locationTag.location.country].filter(Boolean);
+      ipLocation = { text: locationParts.join(", "), countryCode };
     }
 
     const editorSessionNote = formatEditorSessionForClassifier(editorSessionMeta);
@@ -1226,8 +1228,37 @@ Rules:
             let webBlock = "";
             let ragContext = "";
             const needsSearch =
-              lastUser.length >= 30 ||
-              /\b(?:link|url|site|website|search|find|look\s*up|where|apply|glassdoor|linkedin|careers?|news|job|jobs|hiring|opening|position|opportunit|match|salary|remote|work)\b/i.test(lastUser);
+              lastUser.length >= 15 ||
+              /\b(?:link|url|site|website|search|find|look\s*up|where|apply|glassdoor|linkedin|careers?|news|job|jobs|hiring|opening|position|opportunit|match|salary|remote|work|company|companies)\b/i.test(lastUser);
+
+            function buildSearchQuery(text: string): { query: string; minSalary?: number } {
+              // Extract salary before cleaning
+              const salaryMatch = text.match(/\$[\d,]+\.?\d*\s*k?(?:\/year|\/yr|per year|annually)?|\b\d+\s*k(?:\/year|\/yr)?\b/i);
+              let extractedSalary: number | undefined;
+              if (salaryMatch) {
+                const raw = salaryMatch[0].replace(/[$,]/g, "");
+                const num = parseFloat(raw);
+                extractedSalary = raw.toLowerCase().includes("k") || num < 1000 ? num * 1000 : num;
+              }
+
+              // Strip salary text from query
+              let q = text.replace(/\$[\d,]+\.?\d*\s*k?(?:\/year|\/yr|per year|annually)?/gi, "")
+                          .replace(/\b\d+\s*k(?:\/year|\/yr)?\b/gi, "")
+                          .replace(/\bthat pays?\b/gi, "")
+                          .replace(/\bpaying\b/gi, "")
+                          .trim();
+              q = q.replace(/^(?:please\s+)?(?:give me|show me|get me|find me|search for|look\s*up)\s+(?:(?:all\s+)?(?:job\s*)?(?:postings?|listings?|jobs?|positions?|openings?|careers?|details?|info(?:rmation)?)\s+(?:for|at|about|from|on)\s+)?/i, "");
+              q = q.replace(/^(?:i need|i want|i'?m looking for)\s+(?:(?:a\s+)?(?:job|position)\s+(?:at|from|with|in)\s+)?/i, "");
+              q = q.replace(/^(?:what about|how about|tell me about|do you have|don'?t they have|do they have|can you (?:find|get|show))\s+/i, "");
+              q = q.replace(/^(?:all\s+)?(?:details?|info(?:rmation)?)\s+about\s+/i, "");
+              q = q.replace(/\s*(?:companies?|corporation|corp\.?|inc\.?|ltd\.?)?\s*(?:don'?t|do)\s+they\s+have\s+(?:that|jobs?|postings?|listings?|openings?)?/i, "");
+              q = q.replace(/[?.!]+$/, "").trim();
+              if (!q || q.length < 3) return { query: text, minSalary: extractedSalary };
+              if (!/\b(?:job|jobs|position|role|engineer|developer|manager|designer|analyst|intern|career|hiring|opening)\b/i.test(q)) {
+                q = `${q} jobs`;
+              }
+              return { query: q, minSalary: extractedSalary };
+            }
 
             let ragChunks: Awaited<ReturnType<typeof retrieveContext>> = [];
             await runAgentStep(writer, "Searching knowledge base", async () => {
@@ -1255,7 +1286,8 @@ Rules:
 
             if (needsSearch) {
               await runAgentStep(writer, "Searching for live results", async () => {
-                const result = await runSearch(lastUser, this.env, abortSignal, ipLocation);
+                const { query: cleanedQuery, minSalary } = buildSearchQuery(lastUser);
+                const result = await runSearch(cleanedQuery, this.env, abortSignal, ipLocation, minSalary);
                 if (result.block) webBlock = result.block;
               });
               // Ingest the web search block as a document for future retrieval, associated with this conversation session (but not tied to a specific job entry since it's just general context).
@@ -1275,7 +1307,7 @@ Rules:
             let system: string;
 
             if (ctx?.analysis) {
-              system = `${PERSONA_RULE}\n\nYou are an expert career coach helping a job applicant.
+              system = `${PERSONA_RULE}\n\n${SEARCH_CONDUCT_RULE}\n\nYou are an expert career coach helping a job applicant.
 You have already analyzed the following role for them:
 
 Role: ${ctx.jobTitle} at ${ctx.company}
@@ -1301,11 +1333,11 @@ ${resumeSnippet}
 
 The user is asking a follow-up question about this role. Answer specifically using the research above. Be conversational and practical. Do not repeat section headings or restate the full analysis — focus on what the user actually asked.`;
             } else if (ctx) {
-              system = `${PERSONA_RULE}\n\nYou are an expert career coach helping a job applicant.
+              system = `${PERSONA_RULE}\n\n${SEARCH_CONDUCT_RULE}\n\nYou are an expert career coach helping a job applicant.
 Earlier in this conversation you discussed a role: ${ctx.jobTitle} at ${ctx.company}.
 Read the full conversation history carefully and answer the user's follow-up question based on what was said. Be specific and practical. Do not say you cannot see the conversation — it is fully available to you in the message history.${resumeSnippet}`;
             } else {
-              system = `${PERSONA_RULE}\n\nYou are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
+              system = `${PERSONA_RULE}\n\n${SEARCH_CONDUCT_RULE}\n\nYou are a helpful job application research assistant. You help users analyze job postings, understand companies, and prepare for interviews.
 
 CRITICAL RULES — follow without exception:
 1. Only include URLs that appear word-for-word in the search results or web context provided below. Copy them exactly — do not alter, shorten, or invent any part of any URL.
