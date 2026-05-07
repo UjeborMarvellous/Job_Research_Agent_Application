@@ -100,6 +100,15 @@ export default function ChatWindow({
 
   const progressKey = useMemo(() => streamingProgressKey(messages), [messages]);
 
+  const hasPendingChoice = useMemo(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return false;
+    return (last.parts ?? []).some(
+      (p) => (p as { toolName?: string; state?: string }).toolName === "promptChoice" &&
+              (p as { state?: string }).state === "output-available",
+    );
+  }, [messages]);
+
   useEffect(() => {
     if (stallTimer.current) clearTimeout(stallTimer.current);
     if (isStreaming) {
@@ -358,7 +367,7 @@ export default function ChatWindow({
 
       <InputBar
         onSend={onSend}
-        disabled={isStreaming}
+        disabled={isStreaming || hasPendingChoice}
         resumeFileName={resumeFileName}
         onResumeExtracted={onResumeExtracted}
         onResumeRemove={onResumeRemove}

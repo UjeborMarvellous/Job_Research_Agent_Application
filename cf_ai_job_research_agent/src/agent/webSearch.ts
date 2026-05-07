@@ -73,38 +73,40 @@ export async function jSearchJobSearch(
   apiKey: string | undefined,
   signal?: AbortSignal,
   location?: LocationHint,
+  minSalary?: number,
 ): Promise<WebSearchHit[]> {
-  const key = apiKey?.trim();
-  const q = query.trim();
-  if (!key || !q) return [];
+  const trimmedKey = apiKey?.trim();
+  const trimmedQuery = query.trim();
+  if (!trimmedKey || !trimmedQuery) return [];
 
   const url = new URL("https://jsearch.p.rapidapi.com/search");
   // Append location to query so JSearch filters by geography
-  const fullQuery = location ? `${q} ${location.text}` : q;
+  const fullQuery = location ? `${trimmedQuery} ${location.text}` : trimmedQuery;
   url.searchParams.set("query", fullQuery);
   url.searchParams.set("num_pages", "1");
   url.searchParams.set("date_posted", "week");
-  url.searchParams.set("remote_jobs_only", /\bremote\b/i.test(q) ? "true" : "false");
+  url.searchParams.set("remote_jobs_only", /\bremote\b/i.test(trimmedQuery) ? "true" : "false");
+  if (minSalary) url.searchParams.set("min_salary", String(minSalary));
 
   try {
-    const res = await fetch(url.toString(), {
+    const response = await fetch(url.toString(), {
       headers: {
-        "X-RapidAPI-Key": key,
+        "X-RapidAPI-Key": trimmedKey,
         "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
       },
       signal,
     });
 
-    if (!res.ok) {
-      console.error("[jSearchJobSearch] HTTP", res.status, await res.text().catch(() => ""));
+    if (!response.ok) {
+      console.error("[jSearchJobSearch] HTTP", response.status, await response.text().catch(() => ""));
       return [];
     }
 
-    const data = (await res.json()) as { data?: JSearchJob[] };
+    const data = (await response.json()) as { data?: JSearchJob[] };
     const jobs = data.data ?? [];
 
     return jobs.slice(0, 10).map((job) => {
-      const location = [job.job_city, job.job_state, job.job_country]
+      const jobLocation = [job.job_city, job.job_state, job.job_country]
         .filter(Boolean)
         .join(", ");
       const remote = job.job_is_remote ? " · Remote" : "";
@@ -120,11 +122,11 @@ export async function jSearchJobSearch(
       return {
         title: `${job.job_title ?? "Job"} at ${job.employer_name ?? "Company"}`,
         url: job.job_apply_link ?? "",
-        description: `${location}${remote}${type}${salary}${posted}. ${(job.job_description ?? "").slice(0, 220).replace(/\s+/g, " ")}`.trim(),
+        description: `${jobLocation}${remote}${type}${salary}${posted}. ${(job.job_description ?? "").slice(0, 220).replace(/\s+/g, " ")}`.trim(),
       };
-    }).filter((h) => h.url);
-  } catch (err) {
-    console.error("[jSearchJobSearch] fetch error:", err);
+    }).filter((hit) => hit.url);
+  } catch (error) {
+    console.error("[jSearchJobSearch] fetch error:", error);
     return [];
   }
 }
@@ -152,36 +154,36 @@ export async function serperJobSearch(
   signal?: AbortSignal,
   location?: LocationHint,
 ): Promise<WebSearchHit[]> {
-  const key = apiKey?.trim();
-  const q = query.trim();
-  if (!key || !q) return [];
+  const trimmedKey = apiKey?.trim();
+  const trimmedQuery = query.trim();
+  if (!trimmedKey || !trimmedQuery) return [];
 
-  const body: Record<string, unknown> = { q, num: 10 };
+  const requestBody: Record<string, unknown> = { q: trimmedQuery, num: 10 };
   // gl (Google locale) narrows results to the user's country
-  if (location?.countryCode) body.gl = location.countryCode;
+  if (location?.countryCode) requestBody.gl = location.countryCode;
 
   try {
-    const res = await fetch("https://google.serper.dev/jobs", {
+    const response = await fetch("https://google.serper.dev/jobs", {
       method: "POST",
       headers: {
-        "X-API-KEY": key,
+        "X-API-KEY": trimmedKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
       signal,
     });
 
-    if (!res.ok) {
-      console.error("[serperJobSearch] HTTP", res.status, await res.text().catch(() => ""));
+    if (!response.ok) {
+      console.error("[serperJobSearch] HTTP", response.status, await response.text().catch(() => ""));
       return [];
     }
 
-    const data = (await res.json()) as { jobs?: SerperJobResult[] };
+    const data = (await response.json()) as { jobs?: SerperJobResult[] };
     const jobs = data.jobs ?? [];
 
     return jobs.slice(0, 10).map((job) => {
-      const ext = job.detectedExtensions ?? {};
-      const meta = [job.location, ext.scheduleType, ext.postedAt, ext.salary]
+      const extensions = job.detectedExtensions ?? {};
+      const meta = [job.location, extensions.scheduleType, extensions.postedAt, extensions.salary]
         .filter(Boolean)
         .join(" · ");
       const via = job.via ? ` via ${job.via}` : "";
@@ -192,9 +194,9 @@ export async function serperJobSearch(
         url: applyLink,
         description: `${meta}. ${(job.description ?? "").slice(0, 220).replace(/\s+/g, " ")}`.trim(),
       };
-    }).filter((h) => h.url);
-  } catch (err) {
-    console.error("[serperJobSearch] fetch error:", err);
+    }).filter((hit) => hit.url);
+  } catch (error) {
+    console.error("[serperJobSearch] fetch error:", error);
     return [];
   }
 }
@@ -206,38 +208,38 @@ export async function braveWebSearch(
   apiKey: string | undefined,
   signal?: AbortSignal,
 ): Promise<WebSearchHit[]> {
-  const key = apiKey?.trim();
-  const q = query.trim();
-  if (!key || !q) return [];
+  const trimmedKey = apiKey?.trim();
+  const trimmedQuery = query.trim();
+  if (!trimmedKey || !trimmedQuery) return [];
 
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
-  url.searchParams.set("q", q);
+  url.searchParams.set("q", trimmedQuery);
   url.searchParams.set("count", "8");
 
-  const res = await fetch(url.toString(), {
+  const response = await fetch(url.toString(), {
     headers: {
       Accept: "application/json",
-      "X-Subscription-Token": key,
+      "X-Subscription-Token": trimmedKey,
     },
     signal,
   });
 
-  if (!res.ok) {
-    console.error("[braveWebSearch] HTTP", res.status, await res.text().catch(() => ""));
+  if (!response.ok) {
+    console.error("[braveWebSearch] HTTP", response.status, await response.text().catch(() => ""));
     return [];
   }
 
-  const data = (await res.json()) as {
+  const data = (await response.json()) as {
     web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
   };
 
-  const raw = data.web?.results ?? [];
-  return raw
-    .filter((r) => typeof r.url === "string" && /^https?:\/\//i.test(r.url))
-    .map((r) => ({
-      title: (r.title ?? "Untitled").slice(0, 200),
-      url: r.url as string,
-      description: (r.description ?? "").replace(/\s+/g, " ").trim().slice(0, 280),
+  const rawResults = data.web?.results ?? [];
+  return rawResults
+    .filter((result) => typeof result.url === "string" && /^https?:\/\//i.test(result.url))
+    .map((result) => ({
+      title: (result.title ?? "Untitled").slice(0, 200),
+      url: result.url as string,
+      description: (result.description ?? "").replace(/\s+/g, " ").trim().slice(0, 280),
     }));
 }
 
@@ -247,7 +249,7 @@ export async function braveWebSearchMulti(
   signal?: AbortSignal,
 ): Promise<WebSearchHit[]> {
   const results = await Promise.all(
-    queries.map((q) => braveWebSearch(q, apiKey, signal)),
+    queries.map((queryItem) => braveWebSearch(queryItem, apiKey, signal)),
   );
   const seen = new Set<string>();
   const merged: WebSearchHit[] = [];
@@ -273,9 +275,9 @@ export function formatJobSearchContext(hits: WebSearchHit[], source: "jsearch" |
   }
 
   const sourceLabel = source === "jsearch" ? "JSearch (LinkedIn, Indeed, Glassdoor & 500+ boards)" : "Google Jobs (Serper)";
-  const blocks = hits.map((h, i) => {
-    const desc = h.description ? `\n   ${h.description}` : "";
-    return `${i + 1}. ${h.title}\n   Apply: ${h.url}${desc}`;
+  const blocks = hits.map((hit, index) => {
+    const desc = hit.description ? `\n   ${hit.description}` : "";
+    return `${index + 1}. ${hit.title}\n   Apply: ${hit.url}${desc}`;
   });
 
   return [
@@ -294,9 +296,9 @@ export function formatWebSearchContext(hits: WebSearchHit[]): string {
     ].join("\n");
   }
 
-  const blocks = hits.map((h, i) => {
-    const desc = h.description ? `\n   ${h.description}` : "";
-    return `${i + 1}. ${h.title}\n   ${h.url}${desc}`;
+  const blocks = hits.map((hit, index) => {
+    const desc = hit.description ? `\n   ${hit.description}` : "";
+    return `${index + 1}. ${hit.title}\n   ${hit.url}${desc}`;
   });
 
   return [
@@ -603,6 +605,7 @@ export async function runSearch(
   env: { JSEARCH_API_KEY?: string; SERPER_API_KEY?: string; BRAVE_SEARCH_API_KEY?: string },
   signal?: AbortSignal,
   defaultLocation?: LocationHint,
+  minSalary?: number,
 ): Promise<SearchResult> {
   const text = userMessage.trim();
   if (!text) return { block: "", type: "none" };
@@ -627,37 +630,44 @@ export async function runSearch(
 
   if (isJobQuery) {
     // Primary: JSearch
-    const jKey = env.JSEARCH_API_KEY?.trim();
-    if (jKey) {
-      const hits = await jSearchJobSearch(query, jKey, signal, location);
+    const jsearchApiKey = env.JSEARCH_API_KEY?.trim();
+    if (jsearchApiKey) {
+      const hits = await jSearchJobSearch(query, jsearchApiKey, signal, location, minSalary);
       if (hits.length > 0) {
         return { block: formatJobSearchContext(hits, "jsearch"), type: "jobs" };
       }
     }
 
     // Fallback: Serper.dev
-    const sKey = env.SERPER_API_KEY?.trim();
-    if (sKey) {
-      const hits = await serperJobSearch(query, sKey, signal, location);
+    const serperApiKey = env.SERPER_API_KEY?.trim();
+    if (serperApiKey) {
+      const hits = await serperJobSearch(query, serperApiKey, signal, location);
       if (hits.length > 0) {
         return { block: formatJobSearchContext(hits, "serper"), type: "jobs" };
       }
+    }
+
+    // All job APIs exhausted — fall through to Brave for any related listings or context
+    const braveApiKey = env.BRAVE_SEARCH_API_KEY?.trim();
+    if (braveApiKey) {
+      const hits = await braveWebSearchMulti([query], braveApiKey, signal);
+      if (hits.length > 0) return { block: formatWebSearchContext(hits), type: "research" };
     }
 
     return { block: "", type: "none" };
   }
 
   // Company / role research: Brave
-  const bKey = env.BRAVE_SEARCH_API_KEY?.trim();
-  if (!bKey) return { block: "", type: "none" };
+  const braveApiKey = env.BRAVE_SEARCH_API_KEY?.trim();
+  if (!braveApiKey) return { block: "", type: "none" };
 
   const isDeep = looksLikeDeepResearchRequest(text);
-  const query2 = isDeep
+  const secondQuery = isDeep
     ? `${query.replace(/\s+site:\S+/g, "")} culture interview employee review`
     : undefined;
 
-  const queries: [string] | [string, string] = query2 ? [query, query2] : [query];
-  const hits = await braveWebSearchMulti(queries, bKey, signal);
+  const searchQueries: [string] | [string, string] = secondQuery ? [query, secondQuery] : [query];
+  const hits = await braveWebSearchMulti(searchQueries, braveApiKey, signal);
   return { block: formatWebSearchContext(hits), type: "research" };
 }
 
@@ -688,9 +698,9 @@ export function decideWebSearchQuery(
 
   const query = buildQueryFromMessage(text);
   const isDeep = looksLikeDeepResearchRequest(text);
-  const query2 = isDeep
+  const secondQuery = isDeep
     ? `${query.replace(/\s+site:\S+/g, "")} culture interview employee review`
     : undefined;
 
-  return Promise.resolve({ needsSearch: true, query, query2 });
+  return Promise.resolve({ needsSearch: true, query, query2: secondQuery });
 }

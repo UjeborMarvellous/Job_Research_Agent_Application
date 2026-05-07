@@ -229,17 +229,20 @@ function ChatSession({
     if (text) sendMessage({ text });
   }, [messages, sendMessage]);
 
-  // Auto-open or auto-refresh editor when the DO state records a new document.
-  // Previously this also depended on `messages`, which caused the effect to fire
-  // on every streaming chunk. If the DO state was momentarily stale the guard
-  // would compare full content vs truncated message-part content, fail, and
-  // re-open the editor mid-stream — the visible "glitch". Now we trigger only
-  // when lastGeneratedDocument itself changes; the DO writes it exactly once per
-  // generation, so the effect runs at most once per document.
+  // Guard: only auto-open the editor when the agent generated something in THIS
+  // session (i.e. streaming happened). Without this, switching to any conversation
+  // that has a stored lastGeneratedDocument causes the editor to reopen immediately —
+  // the document from a previous session bleeds into the new context.
+  const hasStreamedRef = useRef(false);
+  useEffect(() => {
+    if (isStreaming) hasStreamedRef.current = true;
+  }, [isStreaming]);
+
   const lastGenDocContentRef = useRef<string | null>(null);
   useEffect(() => {
     const stateDoc = agentState.lastGeneratedDocument;
     if (!stateDoc?.content) return;
+    if (!hasStreamedRef.current) return;
     if (lastGenDocContentRef.current === stateDoc.content) return;
     lastGenDocContentRef.current = stateDoc.content;
 

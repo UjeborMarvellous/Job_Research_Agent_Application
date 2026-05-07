@@ -35,14 +35,14 @@ export async function runAgentStep(
       output: { ok: true },
       providerExecuted: true,
     });
-  } catch (e) {
+  } catch (stepError) {
     writer.write({
       type: "tool-output-available",
       toolCallId,
       output: { ok: false },
       providerExecuted: true,
     });
-    throw new Error(`Agent step "${label}" failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+    throw new Error(`Agent step "${label}" failed: ${stepError instanceof Error ? stepError.message : String(stepError)}`, { cause: stepError });
   }
 }
 
